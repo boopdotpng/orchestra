@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
 import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
+import { readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
 import type { AgentEvent, Approval, ApprovalPolicy, SandboxMode, StartAgentOptions } from "./domain/types";
 
 type ParsedArgs = {
@@ -28,17 +29,40 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dbPath = String(args.flags.db ?? ".orchestra/orchestra.sqlite");
-  mkdirSync(dirname(dbPath), { recursive: true });
-  const store = new OrchestraStore(dbPath);
+  const store = new OrchestraStore(typeof args.flags.db === "string" ? args.flags.db : undefined);
   const backend = new CodexV2Backend({
     args: transportArgs(args),
     cwd: process.cwd(),
   });
   const manager = new AgentManager(backend, { store });
+  const workspace = new WorkspaceManager(store, manager);
 
   try {
     switch (args.command) {
+      case "register":
+        register(workspace, args);
+        break;
+      case "create":
+        await create(workspace, args);
+        break;
+      case "teardown":
+        await teardown(workspace, args);
+        break;
+      case "ls":
+        ls(store);
+        break;
+      case "diff":
+        diff(workspace, args);
+        break;
+      case "exec":
+        execAgent(workspace, args);
+        break;
+      case "turn":
+        turn(workspace, args);
+        break;
+      case "tail":
+        await tail(manager, workspace, args);
+        break;
       case "run":
         await run(manager, args);
         break;
@@ -52,13 +76,22 @@ async function main(): Promise<void> {
         await list(manager, args);
         break;
       case "read":
-        await read(manager, args);
+        read(workspace, args);
         break;
       case "interrupt":
-        await interrupt(manager, args);
+        await interrupt(workspace, args);
         break;
       case "steer":
-        await steer(manager, args);
+        await steer(workspace, args);
+        break;
+      case "thread-read":
+        await threadRead(manager, args);
+        break;
+      case "thread-interrupt":
+        await threadInterrupt(manager, args);
+        break;
+      case "thread-steer":
+        await threadSteer(manager, args);
         break;
       case "models":
         await models(backend);
@@ -73,6 +106,103 @@ async function main(): Promise<void> {
   } finally {
     await manager.close();
     store.close();
+  }
+}
+
+function register(workspace: WorkspaceManager, args: ParsedArgs): void {
+  const dir = required(args.positionals[0], "dir");
+  console.log(JSON.stringify(workspace.register(dir), null, 2));
+}
+
+async function create(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const dir = required(args.positionals[0], "dir");
+  const prompt = promptFlag(args);
+  const createOptions = {
+    count: flagNumber(args.flags.n) ?? 1,
+    model: modelFlag(args),
+    approvalPolicy: approvalPolicy(args.flags.approval),
+    sandbox: sandboxMode(args.flags.sandbox),
+  };
+  const agents = await workspace.create(dir, prompt ? { ...createOptions, prompt } : createOptions);
+  for (const agent of agents) {
+    console.log(`${agent.id}\t${agent.status}\t${agent.cwd}\t${agent.threadId}`);
+  }
+}
+
+async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const dir = required(args.positionals[0], "dir");
+  const agents = await workspace.teardown(dir);
+  for (const agent of agents) {
+    console.log(`removed ${agent.id}\t${agent.cwd}`);
+  }
+}
+
+function ls(store: OrchestraStore): void {
+  for (const agent of store.listManagedAgents()) {
+    console.log(`${agent.id}\t${agent.status}\t${agent.repoPath ?? ""}\t${agent.branch}\t${agent.cwd}`);
+  }
+}
+
+function diff(workspace: WorkspaceManager, args: ParsedArgs): void {
+  const id = required(args.positionals[0], "agent id");
+  const text = workspace.diff(id);
+  if (typeof args.flags.out === "string") {
+    writeFileSync(resolve(args.flags.out), text);
+    console.log(resolve(args.flags.out));
+  } else {
+    process.stdout.write(text);
+  }
+}
+
+function execAgent(workspace: WorkspaceManager, args: ParsedArgs): void {
+  const id = required(args.positionals[0], "agent id");
+  const command = args.positionals.slice(1).join(" ");
+  if (!command) {
+    throw new Error("exec requires a command");
+  }
+  const result = workspace.exec(id, command);
+  process.stdout.write(result.output);
+  process.exitCode = result.exitCode;
+}
+
+async function steer(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const id = required(args.positionals[0], "agent id");
+  const prompt = args.positionals.slice(1).join(" ");
+  if (!prompt) {
+    throw new Error("steer requires guidance text");
+  }
+  const result = await workspace.steer(id, prompt, {
+    model: modelFlag(args),
+    approvalPolicy: approvalPolicy(args.flags.approval),
+    sandbox: sandboxMode(args.flags.sandbox),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function interrupt(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const id = required(args.positionals[0], "agent id");
+  const result = await workspace.interrupt(id);
+  console.log(JSON.stringify(result, null, 2));
+}
+
+function turn(workspace: WorkspaceManager, args: ParsedArgs): void {
+  const id = required(args.positionals[0], "agent id");
+  console.log(JSON.stringify(workspace.turn(id), null, 2));
+}
+
+function read(workspace: WorkspaceManager, args: ParsedArgs): void {
+  const id = required(args.positionals[0], "agent id");
+  console.log(workspace.readTranscript(id, Boolean(args.flags.json)));
+}
+
+async function tail(manager: AgentManager, workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const id = required(args.positionals[0], "agent id");
+  const agent = workspace.requiredAgent(id);
+  const events = workspace.turn(id);
+  console.log(JSON.stringify(events, null, 2));
+  if (agent.activeTurnId) {
+    await manager.connect();
+    await waitForTurnCompletion(manager, { stream: true, autoApprove: Boolean(args.flags.yes) });
   }
 }
 
@@ -125,20 +255,14 @@ async function list(manager: AgentManager, args: ParsedArgs): Promise<void> {
   }
 }
 
-async function read(manager: AgentManager, args: ParsedArgs): Promise<void> {
-  const threadId = required(args.positionals[0], "thread id");
-  const result = await manager.readThread(threadId);
-  console.log(JSON.stringify(result, null, 2));
-}
-
-async function interrupt(manager: AgentManager, args: ParsedArgs): Promise<void> {
+async function threadInterrupt(manager: AgentManager, args: ParsedArgs): Promise<void> {
   const threadId = required(args.positionals[0], "thread id");
   const turnId = args.positionals[1];
   const result = await manager.interrupt(threadId, turnId);
   console.log(JSON.stringify(result, null, 2));
 }
 
-async function steer(manager: AgentManager, args: ParsedArgs): Promise<void> {
+async function threadSteer(manager: AgentManager, args: ParsedArgs): Promise<void> {
   const threadId = required(args.positionals[0], "thread id");
   const turnId = required(args.positionals[1], "turn id");
   const prompt = args.positionals.slice(2).join(" ");
@@ -153,6 +277,12 @@ async function models(backend: CodexV2Backend): Promise<void> {
   await backend.connect();
   await backend.initialize();
   const result = await backend.listModels();
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function threadRead(manager: AgentManager, args: ParsedArgs): Promise<void> {
+  const threadId = required(args.positionals[0], "thread id");
+  const result = await manager.readThread(threadId);
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -313,7 +443,7 @@ async function promptForPermissions(manager: AgentManager, approval: Approval): 
 function startOptions(args: ParsedArgs): StartAgentOptions {
   return {
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : process.cwd(),
-    model: typeof args.flags.model === "string" ? args.flags.model : DEFAULT_MODEL,
+    model: modelFlag(args),
     name: typeof args.flags.name === "string" ? args.flags.name : undefined,
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
@@ -324,11 +454,28 @@ function startOptions(args: ParsedArgs): StartAgentOptions {
 function sendOptions(args: ParsedArgs) {
   return {
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : undefined,
-    model: typeof args.flags.model === "string" ? args.flags.model : DEFAULT_MODEL,
+    model: modelFlag(args),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
     personality: "friendly" as const,
   };
+}
+
+function modelFlag(args: ParsedArgs): string {
+  return typeof args.flags.model === "string" ? args.flags.model : DEFAULT_MODEL;
+}
+
+function promptFlag(args: ParsedArgs): string | undefined {
+  if (typeof args.flags.prompt === "string" && typeof args.flags["prompt-file"] === "string") {
+    throw new Error("--prompt and --prompt-file are mutually exclusive");
+  }
+  if (typeof args.flags.prompt === "string") {
+    return args.flags.prompt;
+  }
+  if (typeof args.flags["prompt-file"] === "string") {
+    return readPromptFile(args.flags["prompt-file"]);
+  }
+  return undefined;
 }
 
 function approvalPolicy(value: string | boolean | undefined): ApprovalPolicy | undefined {
@@ -395,6 +542,15 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (!arg) {
       continue;
     }
+    if (arg === "-n") {
+      const next = rest[index + 1];
+      if (!next) {
+        throw new Error("-n requires a value");
+      }
+      flags.n = next;
+      index += 1;
+      continue;
+    }
     if (!arg.startsWith("--")) {
       positionals.push(arg);
       continue;
@@ -436,22 +592,35 @@ function printHelp(): void {
   console.log(`orchestra
 
 Usage:
+  bun run src/cli.ts register <dir>
+  bun run src/cli.ts create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
+  bun run src/cli.ts teardown <dir>
+  bun run src/cli.ts ls
+  bun run src/cli.ts diff <id> [--out FILE]
+  bun run src/cli.ts exec <id> "cmd"
+  bun run src/cli.ts steer <id> "guidance"
+  bun run src/cli.ts interrupt <id>
+  bun run src/cli.ts turn <id>
+  bun run src/cli.ts read <id> [--json]
+  bun run src/cli.ts tail <id>
+
+Lower-level thread commands:
   bun run src/cli.ts daemon start
   bun run src/cli.ts daemon enable-remote-control
   bun run src/cli.ts run "fix the tests" [--cwd .] [--model MODEL] [--approval on-request] [--sandbox workspace-write] [--yes]
   bun run src/cli.ts start [--cwd .] [--name NAME]
   bun run src/cli.ts send THREAD_ID "next task"
-  bun run src/cli.ts steer THREAD_ID TURN_ID "guidance"
-  bun run src/cli.ts interrupt THREAD_ID [TURN_ID]
   bun run src/cli.ts list [--cwd .] [--archived]
-  bun run src/cli.ts read THREAD_ID
+  bun run src/cli.ts thread-read THREAD_ID
+  bun run src/cli.ts thread-steer THREAD_ID TURN_ID "guidance"
+  bun run src/cli.ts thread-interrupt THREAD_ID [TURN_ID]
   bun run src/cli.ts approvals
   bun run src/cli.ts models
 
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
   --transport proxy|stdio   default: proxy
-  --db PATH                 default: .orchestra/orchestra.sqlite
+  --db PATH                 default: ~/.orchestra/orchestra.db
   --approval POLICY         untrusted | on-failure | on-request | never
   --sandbox MODE            read-only | workspace-write | danger-full-access
 `);
