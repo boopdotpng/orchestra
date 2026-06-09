@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -11,11 +11,13 @@ import { OrchestraStore } from "../src/store/OrchestraStore";
 import { WorkspaceManager } from "../src/workspace/WorkspaceManager";
 
 const roots: string[] = [];
+const originalHome = process.env.HOME;
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+  process.env.HOME = originalHome;
 });
 
 describe("Orchestra HTTP handler", () => {
@@ -27,7 +29,7 @@ describe("Orchestra HTTP handler", () => {
     const store = new OrchestraStore(join(root, "orchestra.db"));
     const manager = new AgentManager(new FakeBackend(), { store });
     const workspace = new WorkspaceManager(store, manager);
-    const handler = createOrchestraHandler({ store, manager, workspace });
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
@@ -45,6 +47,48 @@ describe("Orchestra HTTP handler", () => {
     const status = (await statusResponse.json()) as { agents: unknown[]; approvals: unknown[] };
     expect(status.agents).toHaveLength(1);
     expect(status.approvals).toHaveLength(0);
+
+    store.close();
+  });
+
+  test("serves UI route map, config updates, and models", async () => {
+    const root = tempRoot();
+    const home = join(root, "home");
+    process.env.HOME = home;
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const routesResponse = await handler(new Request("http://127.0.0.1/routes"));
+    const routes = (await routesResponse.json()) as { routes: Array<{ method: string; path: string }> };
+    expect(routes.routes.some((route) => route.method === "GET" && route.path === "/events")).toBe(true);
+
+    const updateResponse = await handler(
+      jsonRequest(
+        "http://127.0.0.1/config",
+        {
+          model: "gpt-6",
+          fastMode: true,
+        },
+        "PATCH",
+      ),
+    );
+    expect(updateResponse.status).toBe(200);
+    const config = (await updateResponse.json()) as { model: string; serviceTier: string; fastMode: boolean; sources: string[] };
+    expect(config.model).toBe("gpt-6");
+    expect(config.serviceTier).toBe("priority");
+    expect(readFileSync(join(home, ".orchestra", "config.toml"), "utf8")).toContain('model = "gpt-6"');
+
+    const configResponse = await handler(new Request("http://127.0.0.1/config"));
+    const effective = (await configResponse.json()) as { model: string; serviceTier: string };
+    expect(effective.model).toBe("gpt-6");
+    expect(effective.serviceTier).toBe("priority");
+
+    const modelsResponse = await handler(new Request("http://127.0.0.1/models"));
+    const models = (await modelsResponse.json()) as { data: Array<{ id: string; serviceTiers: string[] }> };
+    expect(models.data[0]?.serviceTiers).toContain("priority");
 
     store.close();
   });
@@ -109,14 +153,21 @@ class FakeBackend implements CodexBackend {
     return {};
   }
   async listModels() {
-    return {};
+    return {
+      data: [
+        {
+          id: "gpt-5.5",
+          serviceTiers: ["default", "priority"],
+        },
+      ],
+    };
   }
   async respond(_requestId: string | number, _result: Json) {}
 }
 
-function jsonRequest(url: string, body: Record<string, unknown>): Request {
+function jsonRequest(url: string, body: Record<string, unknown>, method = "POST"): Request {
   return new Request(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

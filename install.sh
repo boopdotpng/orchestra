@@ -79,6 +79,17 @@ else
   echo "[1/5] Skipping dependency install."
 fi
 
+mkdir -p "$HOME/.orchestra"
+if [[ ! -f "$HOME/.orchestra/config.toml" ]]; then
+  cat > "$HOME/.orchestra/config.toml" <<'EOF'
+model = "gpt-5.5"
+fast_mode = false
+EOF
+  echo "  -> wrote default config: $HOME/.orchestra/config.toml"
+else
+  echo "  -> config already exists: $HOME/.orchestra/config.toml"
+fi
+
 echo "[2/5] Enabling Codex app-server remote control when available..."
 if command -v codex >/dev/null 2>&1; then
   codex app-server daemon enable-remote-control || true

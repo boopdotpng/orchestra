@@ -26,7 +26,7 @@ await manager.connect();
 const server = Bun.serve({
   hostname: host,
   port,
-  fetch: createOrchestraHandler({ store, manager, workspace }),
+  fetch: createOrchestraHandler({ store, manager, workspace, cwd: process.cwd() }),
 });
 
 console.log(`orchestra listening on http://${server.hostname}:${server.port}`);

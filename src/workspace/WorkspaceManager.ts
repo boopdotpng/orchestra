@@ -24,8 +24,12 @@ export class WorkspaceManager {
   constructor(
     private readonly store: OrchestraStore,
     private readonly manager: AgentManager,
-    private readonly defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier"> = {},
+    private defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier"> = {},
   ) {}
+
+  updateDefaults(defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier">): void {
+    this.defaults = defaults;
+  }
 
   register(dir: string): RepoRegistration {
     const repoPath = gitRoot(dir);
@@ -150,8 +154,8 @@ export class WorkspaceManager {
       cwd,
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
-      approvalPolicy: options.approvalPolicy ?? "on-request",
-      sandbox: options.sandbox ?? "workspace-write",
+      approvalPolicy: options.approvalPolicy ?? "never",
+      sandbox: options.sandbox ?? "danger-full-access",
       personality: "friendly",
     });
     const managed: ManagedAgent = {

@@ -45,6 +45,8 @@ describe("WorkspaceManager", () => {
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
     expect(backend.startedThreads[0]?.model).toBe("gpt-6");
     expect(backend.startedThreads[0]?.serviceTier).toBe("priority");
+    expect(backend.startedThreads[0]?.approvalPolicy).toBe("never");
+    expect(backend.startedThreads[0]?.sandbox).toBe("danger-full-access");
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
 
@@ -55,7 +57,13 @@ describe("WorkspaceManager", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
-  startedThreads: Array<{ cwd?: string | undefined; model?: string | undefined; serviceTier?: string | undefined }> = [];
+  startedThreads: Array<{
+    cwd?: string | undefined;
+    model?: string | undefined;
+    serviceTier?: string | undefined;
+    approvalPolicy?: string | undefined;
+    sandbox?: string | undefined;
+  }> = [];
   startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
   private threadCount = 0;
 
@@ -70,7 +78,13 @@ class FakeBackend implements CodexBackend {
   async initialize() {
     return {};
   }
-  async startThread(options: { cwd?: string | undefined; model?: string | undefined; serviceTier?: string | undefined }) {
+  async startThread(options: {
+    cwd?: string | undefined;
+    model?: string | undefined;
+    serviceTier?: string | undefined;
+    approvalPolicy?: string | undefined;
+    sandbox?: string | undefined;
+  }) {
     this.threadCount += 1;
     this.startedThreads.push(options);
     return {

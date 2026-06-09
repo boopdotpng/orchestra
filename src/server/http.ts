@@ -1,13 +1,15 @@
 import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import type { Json } from "../domain/types";
-import { normalizeServiceTier } from "../config";
+import type { AgentEvent, Json } from "../domain/types";
+import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
+import { ORCHESTRA_API_ROUTES } from "./api";
 
 export type OrchestraHttpDeps = {
   store: OrchestraStore;
   manager: AgentManager;
   workspace: WorkspaceManager;
+  cwd?: string | undefined;
 };
 
 export function createOrchestraHandler(deps: OrchestraHttpDeps) {
@@ -33,11 +35,47 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return jsonResponse({ ok: true });
   }
 
+  if (request.method === "GET" && url.pathname === "/routes") {
+    return jsonResponse({ routes: ORCHESTRA_API_ROUTES });
+  }
+
   if (request.method === "GET" && url.pathname === "/status") {
     return jsonResponse({
       agents: deps.store.listManagedAgents(),
       approvals: deps.store.listPendingApprovals(),
     });
+  }
+
+  if (request.method === "GET" && url.pathname === "/config") {
+    return jsonResponse(loadOrchestraConfig({ cwd: deps.cwd }));
+  }
+
+  if (request.method === "PATCH" && url.pathname === "/config") {
+    const body = await readBody(request);
+    const config = writeOrchestraConfig(
+      {
+        model: typeof body.model === "string" ? body.model : undefined,
+        fastMode: typeof body.fastMode === "boolean" ? body.fastMode : typeof body.fast_mode === "boolean" ? body.fast_mode : undefined,
+        serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+      },
+      {
+        scope: configScope(body.scope),
+        cwd: deps.cwd,
+      },
+    );
+    deps.workspace.updateDefaults({
+      model: config.model,
+      serviceTier: config.serviceTier,
+    });
+    return jsonResponse(config);
+  }
+
+  if (request.method === "GET" && url.pathname === "/models") {
+    return jsonResponse(await deps.manager.listModels());
+  }
+
+  if (request.method === "GET" && url.pathname === "/events") {
+    return eventStream(request, deps);
   }
 
   if (request.method === "POST" && url.pathname === "/repos/register") {
@@ -67,6 +105,9 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     const id = parts[1];
     if (request.method === "GET" && parts.length === 2) {
       return jsonResponse(deps.workspace.requiredAgent(id));
+    }
+    if (request.method === "GET" && parts[2] === "events") {
+      return eventStream(request, deps, id);
     }
     if (request.method === "POST" && parts[2] === "steer") {
       const body = await readBody(request);
@@ -134,14 +175,14 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...corsHeaders() },
   });
 }
 
 function textResponse(text: string, status = 200): Response {
   return new Response(text, {
     status,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() },
   });
 }
 
@@ -162,4 +203,61 @@ function sandboxMode(value: unknown) {
 
 function serviceTier(value: unknown) {
   return normalizeServiceTier(value);
+}
+
+function configScope(value: unknown): ConfigScope {
+  return value === "local" ? "local" : "global";
+}
+
+function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string): Response {
+  const threadId = agentId ? deps.workspace.requiredAgent(agentId).threadId : undefined;
+  const encoder = new TextEncoder();
+  let unsubscribe: (() => void) | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: unknown, type = "message") => {
+        controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`));
+      };
+      send({ type: "hello", scope: agentId ? "agent" : "all", agentId }, "hello");
+      unsubscribe = deps.manager.onEvent((event) => {
+        if (!threadId || eventThreadId(event) === threadId) {
+          send(event);
+        }
+      });
+      request.signal.addEventListener("abort", () => {
+        unsubscribe?.();
+        controller.close();
+      });
+    },
+    cancel() {
+      unsubscribe?.();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      ...corsHeaders(),
+    },
+  });
+}
+
+function eventThreadId(event: AgentEvent): string | undefined {
+  if ("threadId" in event && typeof event.threadId === "string") {
+    return event.threadId;
+  }
+  if (event.type === "agent.started") {
+    return event.agent.threadId;
+  }
+  if (event.type === "approval.requested") {
+    return event.approval.threadId;
+  }
+  return undefined;
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+  };
 }

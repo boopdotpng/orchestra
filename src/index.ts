@@ -1,7 +1,10 @@
 export { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
+export { OrchestraClient } from "./client";
 export { loadOrchestraConfig, normalizeServiceTier } from "./config";
 export { AgentManager } from "./manager/AgentManager";
+export { ORCHESTRA_API_ROUTES } from "./server/api";
 export { OrchestraStore } from "./store/OrchestraStore";
 export type * from "./domain/types";
 export type { CodexBackend } from "./backend/CodexBackend";
 export type { OrchestraConfig } from "./config";
+export type * from "./server/api";

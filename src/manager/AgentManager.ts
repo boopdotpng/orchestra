@@ -78,6 +78,11 @@ export class AgentManager {
     return this.backend.readThread(threadId, true);
   }
 
+  async listModels(): Promise<Json> {
+    await this.connect();
+    return this.backend.listModels();
+  }
+
   async send(threadId: string, input: string, options: SendTurnOptions = {}): Promise<Turn> {
     await this.connect();
     await this.backend.resumeThread(threadId, options);

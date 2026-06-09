@@ -1,6 +1,0 @@
-# Default model for new Orchestra agents and turns.
-model = "gpt-5.5"
-
-# false -> app-server serviceTier "default"
-# true  -> app-server serviceTier "priority"
-fast_mode = false

@@ -35,8 +35,10 @@ describe("CodexV2Backend", () => {
     const messages = readFileSync(capture, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { method: string; params: { serviceTier?: string } });
+      .map((line) => JSON.parse(line) as { method: string; params: { approvalPolicy?: string; sandbox?: string; serviceTier?: string } });
     expect(messages.find((message) => message.method === "thread/start")?.params.serviceTier).toBe("default");
+    expect(messages.find((message) => message.method === "thread/start")?.params.approvalPolicy).toBe("never");
+    expect(messages.find((message) => message.method === "thread/start")?.params.sandbox).toBe("danger-full-access");
     expect(messages.find((message) => message.method === "thread/resume")?.params.serviceTier).toBe("default");
     expect(messages.find((message) => message.method === "turn/start")?.params.serviceTier).toBe("default");
   });

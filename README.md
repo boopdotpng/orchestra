@@ -25,6 +25,7 @@ cd orchestra
 The default installer:
 
 - runs `bun install`
+- writes `~/.orchestra/config.toml` if it does not already exist
 - enables Codex app-server daemon remote control when available
 - installs `orchestra.service` as a systemd user service
 - prints MCP registration commands without changing agent config
@@ -63,14 +64,23 @@ Orchestra loads a small TOML config for defaults used by the CLI, HTTP service, 
 
 1. `--config PATH` for CLI commands
 2. `ORCHESTRA_CONFIG=/path/to/orchestra.toml`
-3. `./orchestra.toml`
-4. `~/.orchestra/config.toml`
+3. `~/.orchestra/config.toml`
+4. workdir-local `.orchestra`
+5. workdir-local `.orchestra.toml`
+6. workdir-local `.orchestra/config.toml`
 
-The repo includes a safe default `orchestra.toml`:
+Global config is installed to `~/.orchestra/config.toml`:
 
 ```toml
 model = "gpt-5.5"
 fast_mode = false
+```
+
+Workdir-local config is merged on top of global config, so a project can override your global defaults with a tiny `.orchestra` file:
+
+```toml
+model = "gpt-5.5"
+fast_mode = true
 ```
 
 Config keys:
@@ -79,6 +89,21 @@ Config keys:
 - `fast_mode`: `false` sends app-server `serviceTier: "default"`; `true` sends `serviceTier: "priority"`.
 
 You can also use `service_tier = "default"` or `service_tier = "priority"` if you want the app-server value to be explicit. CLI `--model` and `--service-tier` override the config for that command. MCP `create` and `steer` can also pass `model` or `serviceTier`; when omitted, the service config is used.
+
+Orchestra's own default permission posture is automatic and full-access: new agents use `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless a CLI flag or API request explicitly overrides them.
+
+## HTTP API
+
+The local service is intentionally UI-friendly. Useful endpoints:
+
+- `GET /routes`: OpenAPI-ish route map.
+- `GET /config`: read effective config and source files.
+- `PATCH /config`: update global config by default; pass `{ "scope": "local" }` for the workdir `.orchestra` file.
+- `GET /models`: proxy Codex `model/list`, including service tiers.
+- `GET /events`: server-sent event stream for all live agent events.
+- `GET /agents/:id/events`: server-sent event stream for one agent.
+
+There is also a typed client in `src/client.ts` and route/type definitions in `src/server/api.ts`.
 
 ## MCP
 
@@ -216,10 +241,10 @@ bun run src/cli.ts daemon enable-remote-control
 Pass-through helpers for `codex app-server daemon`.
 
 ```bash
-bun run src/cli.ts run "fix the tests" --cwd . --approval on-request --sandbox workspace-write
+bun run src/cli.ts run "fix the tests" --cwd .
 ```
 
-Starts a Codex thread, sends one prompt, streams the turn, and exits when the turn completes. Add `--yes` to auto-approve command and file-change approvals.
+Starts a Codex thread, sends one prompt, streams the turn, and exits when the turn completes.
 
 ```bash
 bun run src/cli.ts start --cwd . --name "experiment"
@@ -263,7 +288,7 @@ bun run src/server.ts
 bun run src/mcp_server.ts
 ```
 
-The app-server requests always send `serviceTier: "default"` so managed agents stay on the normal tier even when fast mode is available.
+The app-server requests use `serviceTier: "default"` unless config or request overrides select `priority`.
 
 ## License
 
