@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "orchestra": {
+      "command": "bun",
+      "args": ["run", "src/mcp_server.ts"],
+      "cwd": "/home/boop/tenstorrent/orchestra",
+      "timeout": 300
+    }
+  }
+}

@@ -1,2 +1,3 @@
 .orchestra/
 node_modules/
+logs/

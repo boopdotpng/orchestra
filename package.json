@@ -5,10 +5,14 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "orchestra": "./src/cli.ts"
+    "orchestra": "./src/cli.ts",
+    "orchestra-server": "./src/server.ts",
+    "orchestra-mcp": "./src/mcp_server.ts"
   },
   "scripts": {
     "orchestra": "bun run src/cli.ts",
+    "server": "bun run src/server.ts",
+    "mcp": "bun run src/mcp_server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

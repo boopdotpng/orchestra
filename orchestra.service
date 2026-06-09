@@ -1,0 +1,15 @@
+[Unit]
+Description=Orchestra Codex multi-agent control plane
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tenstorrent/orchestra
+ExecStart=%h/.bun/bin/bun run %h/tenstorrent/orchestra/src/server.ts
+Restart=on-failure
+RestartSec=2
+OOMPolicy=continue
+Environment=PATH=%h/.bun/bin:/usr/local/bin:/usr/bin:/bin:%h/.local/bin
+
+[Install]
+WantedBy=default.target
