@@ -58,4 +58,36 @@ describe("OrchestraStore", () => {
 
     store.close();
   });
+
+  test("mirrors turn state into managed agents", () => {
+    const store = new OrchestraStore(dbPath);
+    const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });
+    store.insertManagedAgent({
+      id: "a3f1",
+      repoId: repo.id,
+      cwd: "/run/a3f1",
+      branch: "orchestra/a3f1",
+      threadId: "thread-1",
+      status: "idle",
+      createdAt: 1,
+    });
+
+    store.applyEvent({
+      type: "turn.started",
+      threadId: "thread-1",
+      turn: { threadId: "thread-1", turnId: "turn-1", status: "inProgress" },
+    });
+    expect(store.getManagedAgent("a3f1")?.status).toBe("running");
+    expect(store.getManagedAgent("a3f1")?.activeTurnId).toBe("turn-1");
+
+    store.applyEvent({
+      type: "turn.completed",
+      threadId: "thread-1",
+      turn: { threadId: "thread-1", turnId: "turn-1", status: "completed" },
+    });
+    expect(store.getManagedAgent("a3f1")?.status).toBe("idle");
+    expect(store.getManagedAgent("a3f1")?.activeTurnId).toBeUndefined();
+
+    store.close();
+  });
 });
