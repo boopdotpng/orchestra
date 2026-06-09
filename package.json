@@ -1,0 +1,19 @@
+{
+  "name": "orchestra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "orchestra": "./src/cli.ts"
+  },
+  "scripts": {
+    "orchestra": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}
