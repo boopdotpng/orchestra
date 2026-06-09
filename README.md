@@ -12,6 +12,7 @@ Orchestra creates short-lived, isolated Codex agent workspaces from a registered
 - SQLite state in `~/.orchestra/orchestra.db`.
 - Codex app-server JSON-RPC transport isolated behind `CodexBackend`.
 - Local HTTP service for long-lived control.
+- Web dashboard for creating, steering, and watching agents live.
 - MCP stdio wrapper over the HTTP service.
 
 ## Install
@@ -27,8 +28,9 @@ The default installer:
 - runs `bun install`
 - writes `~/.orchestra/config.toml` if it does not already exist
 - enables Codex app-server daemon remote control when available
-- installs `orchestra.service` as a systemd user service
-- prints MCP registration commands without changing agent config
+- installs `orchestra.service` (HTTP API) as a systemd user service
+- installs `orchestra-ui.service` (web dashboard) as a systemd user service
+- prints the dashboard URL and MCP registration commands without changing agent config
 
 Useful variants:
 
@@ -51,12 +53,33 @@ Installer options:
 The systemd unit is saved in this repo as `orchestra.service` and installs to `~/.config/systemd/user/orchestra.service`.
 
 ```bash
-systemctl --user status orchestra
-systemctl --user restart orchestra
+systemctl --user status orchestra orchestra-ui
+systemctl --user restart orchestra orchestra-ui
 journalctl --user -u orchestra -f
+journalctl --user -u orchestra-ui -f
 ```
 
 The HTTP service defaults to `http://127.0.0.1:5751`. Override with `ORCHESTRA_HOST` and `ORCHESTRA_PORT`.
+
+## Dashboard
+
+`orchestra-ui.service` runs a small web dashboard for managing agents from a browser. It listens on `0.0.0.0` so it is reachable from other machines on your network, on the port directly adjacent to the HTTP API (API port + 1, so `5752` by default).
+
+```
+http://<host>:5752
+```
+
+The dashboard server serves the static UI (`src/ui/index.html`) and reverse-proxies every API call — including the SSE event streams — to the loopback HTTP API. This keeps the control-plane API bound to `127.0.0.1` while the browser only ever talks to a single same-origin port.
+
+The dashboard is a per-workdir monitor. Pick a workdir from the top-left dropdown (populated from the repos that currently have agents — create them from the CLI or MCP) and you get a live grid of that workdir's agents, each card showing status and the agent's most recent output, refreshed every 10s and streamed in between over SSE. Click an agent to open its detail view: live conversation, the workspace diff, and lightweight controls to steer the agent, run a shell command in its workspace, interrupt the active turn, or write a transcript. Agent creation and repo registration are intentionally not in the UI — do those from the CLI or MCP.
+
+Run it standalone with `bun run ui` (or `bun run src/ui_server.ts`). Override binding with:
+
+- `ORCHESTRA_UI_HOST`: dashboard bind address (default `0.0.0.0`).
+- `ORCHESTRA_UI_PORT`: dashboard port (default `ORCHESTRA_PORT + 1`).
+- `ORCHESTRA_API_HOST` / `ORCHESTRA_PORT`: where the dashboard proxies API calls (default `127.0.0.1:5751`).
+
+The HTTP API server also serves the same dashboard at `/` for direct local access on port `5751`.
 
 ## Config
 
@@ -285,6 +308,7 @@ Lists pending approvals stored by Orchestra, or lists available Codex models and
 bun run typecheck
 bun test
 bun run src/server.ts
+bun run src/ui_server.ts
 bun run src/mcp_server.ts
 ```
 

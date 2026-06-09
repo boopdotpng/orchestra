@@ -1,9 +1,12 @@
+import { join } from "node:path";
 import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import type { AgentEvent, Json } from "../domain/types";
 import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
 import { ORCHESTRA_API_ROUTES } from "./api";
+
+const UI_FILE = join(import.meta.dir, "..", "ui", "index.html");
 
 export type OrchestraHttpDeps = {
   store: OrchestraStore;
@@ -30,6 +33,16 @@ export function createOrchestraHandler(deps: OrchestraHttpDeps) {
 async function route(request: Request, deps: OrchestraHttpDeps): Promise<Response> {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui" || url.pathname === "/ui/")) {
+    const file = Bun.file(UI_FILE);
+    if (await file.exists()) {
+      return new Response(file, {
+        headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+      });
+    }
+    return textResponse("UI not found", 404);
+  }
 
   if (request.method === "GET" && url.pathname === "/health") {
     return jsonResponse({ ok: true });

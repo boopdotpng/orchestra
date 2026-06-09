@@ -1,0 +1,17 @@
+[Unit]
+Description=Orchestra dashboard UI server
+After=network.target orchestra.service
+Wants=orchestra.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tenstorrent/orchestra
+ExecStart=%h/.bun/bin/bun run %h/tenstorrent/orchestra/src/ui_server.ts
+Restart=on-failure
+RestartSec=2
+OOMPolicy=continue
+Environment=PATH=%h/.bun/bin:/usr/local/bin:/usr/bin:/bin:%h/.local/bin
+Environment=ORCHESTRA_UI_HOST=0.0.0.0
+
+[Install]
+WantedBy=default.target

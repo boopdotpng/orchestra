@@ -98,12 +98,17 @@ else
 fi
 
 if [[ "$INSTALL_SERVICE" -eq 1 ]]; then
-  echo "[3/5] Installing systemd user service..."
+  echo "[3/5] Installing systemd user services..."
   mkdir -p ~/.config/systemd/user
   cp "$REPO_DIR/orchestra.service" ~/.config/systemd/user/
+  cp "$REPO_DIR/orchestra-ui.service" ~/.config/systemd/user/
   systemctl --user daemon-reload
   systemctl --user enable --now orchestra
-  echo "  -> orchestra.service enabled and started"
+  systemctl --user enable --now orchestra-ui
+  API_PORT="${ORCHESTRA_PORT:-5751}"
+  UI_PORT="${ORCHESTRA_UI_PORT:-$((API_PORT + 1))}"
+  echo "  -> orchestra.service (API) enabled on 127.0.0.1:${API_PORT}"
+  echo "  -> orchestra-ui.service (dashboard) enabled on 0.0.0.0:${UI_PORT}"
 else
   echo "[3/5] Skipping systemd service install."
 fi
@@ -135,6 +140,15 @@ fi
 
 echo "[5/5] Done!"
 echo ""
+if [[ "$INSTALL_SERVICE" -eq 1 ]]; then
+  API_PORT="${ORCHESTRA_PORT:-5751}"
+  UI_PORT="${ORCHESTRA_UI_PORT:-$((API_PORT + 1))}"
+  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "=== Dashboard ==="
+  echo "  Local:   http://127.0.0.1:${UI_PORT}"
+  [[ -n "$HOST_IP" ]] && echo "  Network: http://${HOST_IP}:${UI_PORT}"
+  echo ""
+fi
 echo "=== Register the MCP server with your agent ==="
 echo ""
 echo "Codex:"
