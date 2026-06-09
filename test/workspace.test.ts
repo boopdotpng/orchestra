@@ -31,7 +31,6 @@ describe("WorkspaceManager", () => {
     const repo = workspace.register(source);
     const agents = await workspace.create(source, {
       runsRoot: runs,
-      model: "gpt-5.5",
       prompt: "hello agent",
     });
 
@@ -41,6 +40,7 @@ describe("WorkspaceManager", () => {
     expect(agent.id).toMatch(/^[0-9a-f]{4}$/);
     expect(agent.cwd.startsWith(runs)).toBe(true);
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
+    expect(backend.startedThreads[0]?.model).toBe("gpt-5.5");
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
 
@@ -51,6 +51,7 @@ describe("WorkspaceManager", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
+  startedThreads: Array<{ cwd?: string | undefined; model?: string | undefined }> = [];
   startedTurns: Array<{ threadId: string; input: string }> = [];
   private threadCount = 0;
 
@@ -65,8 +66,9 @@ class FakeBackend implements CodexBackend {
   async initialize() {
     return {};
   }
-  async startThread(options: { cwd?: string | undefined }) {
+  async startThread(options: { cwd?: string | undefined; model?: string | undefined }) {
     this.threadCount += 1;
+    this.startedThreads.push(options);
     return {
       thread: {
         id: `thread-${this.threadCount}`,

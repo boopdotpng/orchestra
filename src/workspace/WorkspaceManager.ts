@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentManager } from "../manager/AgentManager";
+import { DEFAULT_MODEL } from "../config";
 import type { ManagedAgent, RepoRegistration, StartAgentOptions } from "../domain/types";
 import { OrchestraStore } from "../store/OrchestraStore";
 
@@ -55,7 +56,7 @@ export class WorkspaceManager {
         ? await this.manager.steer(agent.threadId, agent.activeTurnId, input)
         : await this.manager.send(agent.threadId, input, {
             cwd: agent.cwd,
-            model: options.model,
+            model: options.model ?? DEFAULT_MODEL,
             approvalPolicy: options.approvalPolicy,
             sandbox: options.sandbox,
             personality: "friendly",
@@ -144,7 +145,7 @@ export class WorkspaceManager {
 
     const thread = await this.manager.startAgent({
       cwd,
-      model: options.model,
+      model: options.model ?? DEFAULT_MODEL,
       approvalPolicy: options.approvalPolicy ?? "on-request",
       sandbox: options.sandbox ?? "workspace-write",
       personality: "friendly",
@@ -165,7 +166,7 @@ export class WorkspaceManager {
     if (options.prompt) {
       const turn = await this.manager.startTurn(thread.threadId, options.prompt, {
         cwd,
-        model: options.model,
+        model: options.model ?? DEFAULT_MODEL,
         approvalPolicy: options.approvalPolicy,
         sandbox: options.sandbox,
         personality: "friendly",

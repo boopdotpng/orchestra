@@ -336,8 +336,12 @@ export class OrchestraStore {
   }
 
   recordEvent(method: string, payload: Json): void {
-    const threadId = readString(payload, "threadId") ?? readNestedString(payload, "agent", "threadId");
-    const turnId = readString(payload, "turnId") ?? readNestedString(payload, "turn", "turnId");
+    const threadId =
+      readString(payload, "threadId") ??
+      readNestedString(payload, "agent", "threadId") ??
+      readNestedString(payload, "params", "threadId");
+    const turnId =
+      readString(payload, "turnId") ?? readNestedString(payload, "turn", "turnId") ?? readNestedString(payload, "params", "turnId");
     this.db
       .query("INSERT INTO events (thread_id, turn_id, method, payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?)")
       .run(threadId ?? null, turnId ?? null, method, JSON.stringify(payload), Date.now());

@@ -7,6 +7,7 @@ import { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
 import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
 import { readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
+import { DEFAULT_MODEL } from "./config";
 import type { AgentEvent, Approval, ApprovalPolicy, SandboxMode, StartAgentOptions } from "./domain/types";
 
 type ParsedArgs = {
@@ -14,8 +15,6 @@ type ParsedArgs = {
   positionals: string[];
   flags: Record<string, string | boolean>;
 };
-
-const DEFAULT_MODEL = "gpt-5.5";
 
 async function main(): Promise<void> {
   const args = parseArgs(Bun.argv.slice(2));

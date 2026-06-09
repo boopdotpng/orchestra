@@ -90,4 +90,24 @@ describe("OrchestraStore", () => {
 
     store.close();
   });
+
+  test("indexes generic notification events by nested params thread id", () => {
+    const store = new OrchestraStore(dbPath);
+    store.applyEvent({
+      type: "notification",
+      method: "item/mcpToolCall/progress",
+      params: {
+        threadId: "thread-tool",
+        turnId: "turn-tool",
+        itemId: "item-tool",
+        delta: "tool output",
+      },
+    });
+
+    const events = store.listEvents("thread-tool", 10);
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events[0])).toContain("item/mcpToolCall/progress");
+
+    store.close();
+  });
 });
