@@ -37,9 +37,18 @@ bun run src/cli.ts teardown <dir>
 The installer:
 
 - runs `bun install`
-- starts Codex app-server daemon remote control
+- enables Codex app-server daemon remote control when available
 - installs `orchestra.service` as a systemd user service
-- prints MCP registration commands
+- optionally registers the MCP server with Codex and/or Claude Code
+
+Useful variants:
+
+```bash
+./install.sh --codex
+./install.sh --claude
+./install.sh --all
+./install.sh --no-service --codex --claude
+```
 
 Manual MCP command:
 

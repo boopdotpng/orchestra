@@ -2,35 +2,137 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUN_BIN="${BUN_BIN:-$HOME/.bun/bin/bun}"
+INSTALL_CODEX=0
+INSTALL_CLAUDE=0
+INSTALL_SERVICE=1
+INSTALL_DEPS=1
+
+usage() {
+  cat <<EOF
+Usage: ./install.sh [options]
+
+Options:
+  --codex        Register the Orchestra MCP server in Codex.
+  --claude       Register the Orchestra MCP server in Claude Code user config.
+  --all          Register both Codex and Claude MCP servers.
+  --no-service   Do not install/start the systemd user service.
+  --no-deps      Do not run bun install.
+  -h, --help     Show this help.
+
+By default, installs dependencies and the systemd user service, then prints MCP
+registration commands without changing Codex or Claude config.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --codex)
+      INSTALL_CODEX=1
+      ;;
+    --claude)
+      INSTALL_CLAUDE=1
+      ;;
+    --all)
+      INSTALL_CODEX=1
+      INSTALL_CLAUDE=1
+      ;;
+    --no-service)
+      INSTALL_SERVICE=0
+      ;;
+    --no-deps)
+      INSTALL_DEPS=0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ ! -x "$BUN_BIN" ]]; then
+  if command -v bun >/dev/null 2>&1; then
+    BUN_BIN="$(command -v bun)"
+  else
+    echo "bun not found. Install Bun or set BUN_BIN=/path/to/bun." >&2
+    exit 1
+  fi
+fi
 
 echo "=== orchestra installer ==="
 echo "Repo: $REPO_DIR"
+echo "Bun:  $BUN_BIN"
 echo ""
 
-echo "[1/4] Installing Bun dependencies..."
 cd "$REPO_DIR"
-bun install
 
-echo "[2/4] Starting Codex app-server daemon..."
-codex app-server daemon start || true
-codex app-server daemon enable-remote-control || true
+if [[ "$INSTALL_DEPS" -eq 1 ]]; then
+  echo "[1/5] Installing Bun dependencies..."
+  "$BUN_BIN" install
+else
+  echo "[1/5] Skipping dependency install."
+fi
 
-echo "[3/4] Installing systemd user service..."
-mkdir -p ~/.config/systemd/user
-cp "$REPO_DIR/orchestra.service" ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now orchestra
-echo "  -> orchestra.service enabled and started"
+echo "[2/5] Enabling Codex app-server remote control when available..."
+if command -v codex >/dev/null 2>&1; then
+  codex app-server daemon enable-remote-control || true
+else
+  echo "  -> codex not found; Orchestra service will still use app-server stdio fallback."
+fi
 
-echo "[4/4] Done!"
+if [[ "$INSTALL_SERVICE" -eq 1 ]]; then
+  echo "[3/5] Installing systemd user service..."
+  mkdir -p ~/.config/systemd/user
+  cp "$REPO_DIR/orchestra.service" ~/.config/systemd/user/
+  systemctl --user daemon-reload
+  systemctl --user enable --now orchestra
+  echo "  -> orchestra.service enabled and started"
+else
+  echo "[3/5] Skipping systemd service install."
+fi
+
+echo "[4/5] Registering requested MCP servers..."
+if [[ "$INSTALL_CODEX" -eq 1 ]]; then
+  if command -v codex >/dev/null 2>&1; then
+    codex mcp remove orchestra >/dev/null 2>&1 || true
+    codex mcp add orchestra -- "$BUN_BIN" run "$REPO_DIR/src/mcp_server.ts"
+    echo "  -> registered Codex MCP server: orchestra"
+  else
+    echo "  -> codex not found; skipped Codex MCP registration."
+  fi
+else
+  echo "  -> Codex MCP registration skipped. Use --codex or --all."
+fi
+
+if [[ "$INSTALL_CLAUDE" -eq 1 ]]; then
+  if command -v claude >/dev/null 2>&1; then
+    claude mcp remove -s user orchestra >/dev/null 2>&1 || true
+    claude mcp add -s user orchestra -- "$BUN_BIN" run "$REPO_DIR/src/mcp_server.ts"
+    echo "  -> registered Claude Code MCP server: orchestra"
+  else
+    echo "  -> claude not found; skipped Claude MCP registration."
+  fi
+else
+  echo "  -> Claude MCP registration skipped. Use --claude or --all."
+fi
+
+echo "[5/5] Done!"
 echo ""
 echo "=== Register the MCP server with your agent ==="
 echo ""
 echo "Codex:"
-echo "  codex mcp add orchestra -- $HOME/.bun/bin/bun run $REPO_DIR/src/mcp_server.ts"
+echo "  ./install.sh --codex"
+echo "  codex mcp add orchestra -- $BUN_BIN run $REPO_DIR/src/mcp_server.ts"
 echo ""
 echo "Claude Code:"
-echo "  claude mcp add -s user orchestra -- $HOME/.bun/bin/bun run $REPO_DIR/src/mcp_server.ts"
+echo "  ./install.sh --claude"
+echo "  claude mcp add -s user orchestra -- $BUN_BIN run $REPO_DIR/src/mcp_server.ts"
 echo ""
 echo "Project .mcp.json:"
-echo "  {\"mcpServers\":{\"orchestra\":{\"command\":\"$HOME/.bun/bin/bun\",\"args\":[\"run\",\"$REPO_DIR/src/mcp_server.ts\"],\"cwd\":\"$REPO_DIR\",\"timeout\":300}}}"
+echo "  .mcp.json is already present in this repo."
