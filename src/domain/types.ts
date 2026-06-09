@@ -23,6 +23,29 @@ export type StartAgentOptions = {
   developerInstructions?: string | undefined;
 };
 
+export type RepoRegistration = {
+  id: number;
+  path: string;
+  baseCommit: string;
+  baseBranch: string;
+  createdAt: number;
+};
+
+export type ManagedAgentStatus = "idle" | "running" | "waiting_approval" | "error" | "notLoaded";
+
+export type ManagedAgent = {
+  id: string;
+  repoId: number;
+  repoPath?: string | undefined;
+  baseCommit?: string | undefined;
+  cwd: string;
+  branch: string;
+  threadId: string;
+  activeTurnId?: string | undefined;
+  status: ManagedAgentStatus;
+  createdAt: number;
+};
+
 export type Agent = {
   threadId: string;
   sessionId?: string | undefined;

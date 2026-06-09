@@ -1,7 +1,19 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Agent, AgentEvent, Approval, Json, RuntimeStatus, Turn, TurnStatus } from "../domain/types";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type {
+  Agent,
+  AgentEvent,
+  Approval,
+  Json,
+  ManagedAgent,
+  ManagedAgentStatus,
+  RepoRegistration,
+  RuntimeStatus,
+  Turn,
+} from "../domain/types";
 
 type Row = Record<string, unknown>;
 
@@ -84,6 +96,25 @@ export class OrchestraStore {
         payload_json TEXT,
         created_at_ms INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS repos (
+        id INTEGER PRIMARY KEY,
+        path TEXT UNIQUE NOT NULL,
+        base_commit TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS managed_agents (
+        id TEXT PRIMARY KEY,
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        cwd TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        thread_id TEXT NOT NULL UNIQUE,
+        active_turn_id TEXT,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -96,6 +127,7 @@ export class OrchestraStore {
         break;
       case "agent.status":
         this.updateAgentStatus(event.threadId, event.status, event.raw);
+        this.updateManagedAgentStatus(event.threadId, managedStatusFromRuntime(event.status));
         break;
       case "agent.name":
         this.updateAgentName(event.threadId, event.name);
@@ -107,6 +139,11 @@ export class OrchestraStore {
       case "turn.completed":
         this.upsertTurn(event.turn);
         this.updateActiveTurn(event.threadId, event.type === "turn.started" ? event.turn.turnId : null);
+        this.updateManagedAgentTurn(
+          event.threadId,
+          event.type === "turn.started" ? event.turn.turnId : null,
+          event.type === "turn.started" ? "running" : managedStatusFromTurn(event.turn.status),
+        );
         break;
       case "turn.diff":
         this.updateTurnDiff(event.turnId, event.diff);
@@ -125,6 +162,9 @@ export class OrchestraStore {
         break;
       case "approval.requested":
         this.insertApproval(event.approval);
+        if (event.approval.threadId) {
+          this.updateManagedAgentStatus(event.approval.threadId, "waiting_approval");
+        }
         break;
       case "approval.resolved":
         if (event.requestId !== undefined) {
@@ -187,6 +227,114 @@ export class OrchestraStore {
     return row ? agentFromRow(row) : undefined;
   }
 
+  upsertRepo(input: { path: string; baseCommit: string; baseBranch: string; createdAt?: number }): RepoRegistration {
+    const createdAt = input.createdAt ?? nowSeconds();
+    this.db
+      .query(
+        `INSERT INTO repos (path, base_commit, base_branch, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(path) DO UPDATE SET path = excluded.path
+        `,
+      )
+      .run(input.path, input.baseCommit, input.baseBranch, createdAt);
+    const row = this.db.query("SELECT * FROM repos WHERE path = ?").get(input.path) as Row;
+    return repoFromRow(row);
+  }
+
+  getRepoByPath(path: string): RepoRegistration | undefined {
+    const row = this.db.query("SELECT * FROM repos WHERE path = ?").get(path) as Row | undefined;
+    return row ? repoFromRow(row) : undefined;
+  }
+
+  listRepos(): RepoRegistration[] {
+    return (this.db.query("SELECT * FROM repos ORDER BY created_at DESC").all() as Row[]).map(repoFromRow);
+  }
+
+  insertManagedAgent(agent: ManagedAgent): void {
+    this.db
+      .query(
+        `INSERT INTO managed_agents (id, repo_id, cwd, branch, thread_id, active_turn_id, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+          repo_id = excluded.repo_id,
+          cwd = excluded.cwd,
+          branch = excluded.branch,
+          thread_id = excluded.thread_id,
+          active_turn_id = excluded.active_turn_id,
+          status = excluded.status`,
+      )
+      .run(
+        agent.id,
+        agent.repoId,
+        agent.cwd,
+        agent.branch,
+        agent.threadId,
+        agent.activeTurnId ?? null,
+        agent.status,
+        agent.createdAt,
+      );
+  }
+
+  getManagedAgent(id: string): ManagedAgent | undefined {
+    const row = this.db
+      .query(
+        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+         FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
+         WHERE managed_agents.id = ?`,
+      )
+      .get(id) as Row | undefined;
+    return row ? managedAgentFromRow(row) : undefined;
+  }
+
+  listManagedAgents(): ManagedAgent[] {
+    const rows = this.db
+      .query(
+        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+         FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
+         ORDER BY managed_agents.created_at DESC`,
+      )
+      .all() as Row[];
+    return rows.map(managedAgentFromRow);
+  }
+
+  listManagedAgentsForRepo(repoId: number): ManagedAgent[] {
+    const rows = this.db
+      .query(
+        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+         FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
+         WHERE repo_id = ?
+         ORDER BY managed_agents.created_at DESC`,
+      )
+      .all(repoId) as Row[];
+    return rows.map(managedAgentFromRow);
+  }
+
+  deleteManagedAgent(id: string): void {
+    this.db.query("DELETE FROM managed_agents WHERE id = ?").run(id);
+  }
+
+  listEvents(threadId: string, limit = 100): Json[] {
+    const rows = this.db
+      .query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id DESC LIMIT ?")
+      .all(threadId, limit) as Row[];
+    return rows.reverse().map((row) => parseJson(row.payload_json) ?? {});
+  }
+
+  getTurn(turnId: string): Turn | undefined {
+    const row = this.db.query("SELECT * FROM turns WHERE turn_id = ?").get(turnId) as Row | undefined;
+    if (!row) {
+      return undefined;
+    }
+    return {
+      turnId,
+      threadId: String(row.thread_id),
+      status: (optionalString(row.status) ?? "inProgress") as Turn["status"],
+      diff: optionalString(row.diff),
+      plan: parseJson(row.plan_json),
+      raw: parseJson(row.raw_json),
+    };
+  }
+
   recordEvent(method: string, payload: Json): void {
     const threadId = readString(payload, "threadId") ?? readNestedString(payload, "agent", "threadId");
     const turnId = readString(payload, "turnId") ?? readNestedString(payload, "turn", "turnId");
@@ -213,6 +361,16 @@ export class OrchestraStore {
 
   private updateActiveTurn(threadId: string, turnId: string | null): void {
     this.db.query("UPDATE agents SET active_turn_id = ?, stored_at_ms = ? WHERE thread_id = ?").run(turnId, Date.now(), threadId);
+  }
+
+  private updateManagedAgentTurn(threadId: string, turnId: string | null, status: ManagedAgentStatus): void {
+    this.db
+      .query("UPDATE managed_agents SET active_turn_id = ?, status = ? WHERE thread_id = ?")
+      .run(turnId, status, threadId);
+  }
+
+  private updateManagedAgentStatus(threadId: string, status: ManagedAgentStatus): void {
+    this.db.query("UPDATE managed_agents SET status = ? WHERE thread_id = ?").run(status, threadId);
   }
 
   private upsertTurn(turn: Turn): void {
@@ -314,7 +472,7 @@ export class OrchestraStore {
 }
 
 function defaultDbPath(): string {
-  return process.env.ORCHESTRA_DB ?? ".orchestra/orchestra.sqlite";
+  return process.env.ORCHESTRA_DB ?? join(homedir(), ".orchestra", "orchestra.db");
 }
 
 function stringifyOrNull(value: Json | undefined): string | null {
@@ -345,6 +503,54 @@ function agentFromRow(row: Row): Agent {
   };
 }
 
+function repoFromRow(row: Row): RepoRegistration {
+  return {
+    id: Number(row.id),
+    path: String(row.path),
+    baseCommit: String(row.base_commit),
+    baseBranch: String(row.base_branch),
+    createdAt: Number(row.created_at),
+  };
+}
+
+function managedAgentFromRow(row: Row): ManagedAgent {
+  return {
+    id: String(row.id),
+    repoId: Number(row.repo_id),
+    repoPath: optionalString(row.repo_path),
+    baseCommit: optionalString(row.base_commit),
+    cwd: String(row.cwd),
+    branch: String(row.branch),
+    threadId: String(row.thread_id),
+    activeTurnId: optionalString(row.active_turn_id),
+    status: (optionalString(row.status) ?? "notLoaded") as ManagedAgentStatus,
+    createdAt: Number(row.created_at),
+  };
+}
+
+function managedStatusFromRuntime(status: RuntimeStatus): ManagedAgentStatus {
+  if (status === "active") {
+    return "running";
+  }
+  if (status === "systemError") {
+    return "error";
+  }
+  if (status === "idle") {
+    return "idle";
+  }
+  return "notLoaded";
+}
+
+function managedStatusFromTurn(status: Turn["status"]): ManagedAgentStatus {
+  if (status === "inProgress") {
+    return "running";
+  }
+  if (status === "failed") {
+    return "error";
+  }
+  return "idle";
+}
+
 function approvalFromRow(row: Row): Approval {
   const params = parseJson(row.params_json) ?? {};
   return {
@@ -365,6 +571,10 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 function asRecord(value: Json | undefined): Record<string, Json | undefined> | undefined {
