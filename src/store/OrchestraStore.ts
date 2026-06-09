@@ -172,6 +172,7 @@ export class OrchestraStore {
       case "approval.resolved":
         if (event.requestId !== undefined) {
           this.resolveApproval(event.requestId, event.raw);
+          this.resumeManagedAgentAfterResolvedApproval(event.requestId);
         }
         break;
     }
@@ -510,6 +511,25 @@ export class OrchestraStore {
     this.db
       .query("UPDATE approvals SET status = 'resolved', response_json = ?, resolved_at_ms = ? WHERE request_id = ?")
       .run(JSON.stringify(response), Date.now(), String(requestId));
+  }
+
+  private resumeManagedAgentAfterResolvedApproval(requestId: string | number): void {
+    const row = this.db
+      .query("SELECT thread_id FROM approvals WHERE request_id = ?")
+      .get(String(requestId)) as Row | null;
+    const threadId = optionalString(row?.thread_id);
+    if (!threadId) {
+      return;
+    }
+    const pending = this.db
+      .query("SELECT COUNT(*) AS count FROM approvals WHERE thread_id = ? AND status = 'pending'")
+      .get(threadId) as Row | null;
+    if (Number(pending?.count ?? 0) > 0) {
+      return;
+    }
+    this.db
+      .query("UPDATE managed_agents SET status = 'running' WHERE thread_id = ? AND active_turn_id IS NOT NULL AND status = 'waiting_approval'")
+      .run(threadId);
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {

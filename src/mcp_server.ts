@@ -41,7 +41,7 @@ server.tool(
   [
     "Show enriched status for all agents, including last message tail, turn counts, token usage, last activity, and any pending approvals.",
     "For Claude Code monitoring, run `orchestra monitor <agent-id>` for one agent or `orchestra monitor <workdir>` to wait for every agent in a workdir.",
-    "That monitor command prints one line per meaningful agent event and exits once the watched agent or workdir is idle unless `--follow` is passed.",
+    "That monitor command prints only completion lines: once for a single agent, or once per agent completion in a watched workdir.",
   ].join(" "),
   {},
   async () => text(await get("/status")),

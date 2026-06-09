@@ -237,7 +237,7 @@ orchestra monitor <workdir>
 orchestra monitor <workdir> --follow
 ```
 
-Prints one line per meaningful live agent event from the running Orchestra service. With an agent id, it exits when that agent is idle. With a workdir, it exits when all agents in that workdir are idle. Add `--follow` to keep watching.
+With an agent id, waits for that agent to finish and prints one completion line. With a workdir, prints one completion line for each agent in that workdir and exits when all matching agents are idle. Add `--follow` to keep watching for later turns.
 
 ### Debug Commands
 

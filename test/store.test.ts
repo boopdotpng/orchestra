@@ -91,6 +91,40 @@ describe("OrchestraStore", () => {
     store.close();
   });
 
+  test("returns managed agent to running after approval resolves during active turn", () => {
+    const store = new OrchestraStore(dbPath);
+    const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });
+    store.insertManagedAgent({
+      id: "a3f1",
+      repoId: repo.id,
+      cwd: "/run/a3f1",
+      branch: "orchestra/a3f1",
+      threadId: "thread-1",
+      activeTurnId: "turn-1",
+      status: "running",
+      createdAt: 1,
+    });
+
+    store.applyEvent({
+      type: "approval.requested",
+      approval: {
+        requestId: 7,
+        method: "mcpServer/elicitation/request",
+        kind: "mcpElicitation",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        params: {},
+        createdAtMs: 1,
+      },
+    });
+    expect(store.getManagedAgent("a3f1")?.status).toBe("waiting_approval");
+
+    store.applyEvent({ type: "approval.resolved", requestId: 7, raw: { decision: "accept" } });
+    expect(store.getManagedAgent("a3f1")?.status).toBe("running");
+
+    store.close();
+  });
+
   test("keeps managed agents but clears transient runtime state on startup", () => {
     const store = new OrchestraStore(dbPath);
     const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });

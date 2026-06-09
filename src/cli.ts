@@ -565,6 +565,12 @@ type MonitorAgent = {
   lastAssistantMessageTail?: string | undefined;
 };
 
+type MonitorCompletion = {
+  agent: MonitorAgent;
+  status: string;
+  turnId?: string | undefined;
+};
+
 async function monitor(args: ParsedArgs): Promise<void> {
   const baseUrl = orchestraUrl(args);
   const idFilter = typeof args.flags.id === "string" ? args.flags.id : args.positionals[0] && /^[0-9a-f]{4}$/i.test(args.positionals[0]) ? args.positionals[0] : undefined;
@@ -575,16 +581,19 @@ async function monitor(args: ParsedArgs): Promise<void> {
         ? resolve(args.positionals[0])
         : undefined;
   const exitWhenIdle = args.flags.until === "never" || args.flags.follow === true ? false : true;
+  const singleAgent = Boolean(idFilter);
   const agents = await fetchMonitorAgents(baseUrl, idFilter, workdirFilter);
   if (!agents.size) {
-    console.log(`monitor no matching agents${idFilter ? ` id=${idFilter}` : ""}${workdirFilter ? ` workdir=${workdirFilter}` : ""}`);
+    console.error(`monitor no matching agents${idFilter ? ` id=${idFilter}` : ""}${workdirFilter ? ` workdir=${workdirFilter}` : ""}`);
     return;
   }
-  for (const agent of agents.values()) {
-    printMonitorLine(agent.id, `status ${agent.status}${agent.lastAssistantMessageTail ? ` · ${oneLine(agent.lastAssistantMessageTail)}` : ""}`);
-  }
   if (exitWhenIdle && allMonitorAgentsIdle(agents)) {
-    console.log("monitor done");
+    if (singleAgent) {
+      const agent = [...agents.values()][0];
+      if (agent) {
+        printMonitorCompletion({ agent, status: agent.status });
+      }
+    }
     return;
   }
 
@@ -594,6 +603,7 @@ async function monitor(args: ParsedArgs): Promise<void> {
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const completedAgents = new Set<string>();
   let buffer = "";
   while (true) {
     const chunk = await reader.read();
@@ -607,9 +617,15 @@ async function monitor(args: ParsedArgs): Promise<void> {
       buffer = buffer.slice(split + 2);
       const event = parseSseFrame(frame);
       if (event) {
-        handleMonitorEvent(event, agents);
+        const result = handleMonitorEvent(event, agents);
+        if (result?.startedAgentId) {
+          completedAgents.delete(result.startedAgentId);
+        }
+        if (result?.completion && !completedAgents.has(result.completion.agent.id)) {
+          printMonitorCompletion(result.completion);
+          completedAgents.add(result.completion.agent.id);
+        }
         if (exitWhenIdle && allMonitorAgentsIdle(agents)) {
-          console.log("monitor done");
           await reader.cancel();
           return;
         }
@@ -638,7 +654,10 @@ async function fetchMonitorAgents(baseUrl: string, idFilter?: string, workdirFil
   return agents;
 }
 
-function handleMonitorEvent(event: Record<string, unknown>, agents: Map<string, MonitorAgent>): void {
+function handleMonitorEvent(
+  event: Record<string, unknown>,
+  agents: Map<string, MonitorAgent>,
+): { completion?: MonitorCompletion | undefined; startedAgentId?: string | undefined } | undefined {
   const agent = [...agents.values()].find((candidate) => monitorEventThreadId(event) === candidate.threadId);
   if (!agent) {
     return;
@@ -646,23 +665,24 @@ function handleMonitorEvent(event: Record<string, unknown>, agents: Map<string, 
   const type = typeof event.type === "string" ? event.type : "";
   if (type === "turn.started") {
     agent.status = "running";
-    printMonitorLine(agent.id, `turn started ${monitorTurnId(event) ?? ""}`.trim());
-    return;
+    return { startedAgentId: agent.id };
   }
   if (type === "turn.completed") {
-    agent.status = monitorTurnStatus(event) === "failed" ? "error" : "idle";
-    printMonitorLine(agent.id, `turn completed ${monitorTurnStatus(event) ?? "done"} ${monitorTurnId(event) ?? ""}`.trim());
-    return;
+    const status = monitorTurnStatus(event) ?? "completed";
+    agent.status = status === "failed" ? "error" : "idle";
+    return { completion: { agent, status, turnId: monitorTurnId(event) } };
   }
   if (type === "agent.status") {
+    const previousStatus = agent.status;
     const status = typeof event.status === "string" ? event.status : "";
     agent.status = status === "active" ? "running" : status === "systemError" ? "error" : status;
-    printMonitorLine(agent.id, `status ${agent.status}`);
+    if (previousStatus !== agent.status && isMonitorAgentIdle(agent)) {
+      return { completion: { agent, status: agent.status } };
+    }
     return;
   }
   if (type === "approval.requested") {
     agent.status = "waiting_approval";
-    printMonitorLine(agent.id, "approval requested");
     return;
   }
   if (type === "item.completed") {
@@ -670,17 +690,12 @@ function handleMonitorEvent(event: Record<string, unknown>, agents: Map<string, 
     const itemType = typeof item.type === "string" ? item.type : "";
     if (itemType === "agentMessage" && typeof item.text === "string") {
       agent.lastAssistantMessageTail = item.text;
-      printMonitorLine(agent.id, `assistant ${oneLine(item.text)}`);
-    } else if (itemType === "commandExecution") {
-      printMonitorLine(agent.id, `command ${item.status ?? "completed"} ${oneLine(typeof item.command === "string" ? item.command : "")}`.trim());
-    } else if (itemType) {
-      printMonitorLine(agent.id, `item ${itemType}`);
     }
     return;
   }
   if (type === "error") {
     agent.status = "error";
-    printMonitorLine(agent.id, "error");
+    return { completion: { agent, status: "error" } };
   }
 }
 
@@ -724,11 +739,15 @@ function monitorTurnStatus(event: Record<string, unknown>): string | undefined {
 }
 
 function allMonitorAgentsIdle(agents: Map<string, MonitorAgent>): boolean {
-  return [...agents.values()].every((agent) => agent.status === "idle" || agent.status === "error" || agent.status === "notLoaded");
+  return [...agents.values()].every(isMonitorAgentIdle);
 }
 
-function printMonitorLine(id: string, text: string): void {
-  console.log(`${new Date().toISOString()}\t${id}\t${text}`);
+function isMonitorAgentIdle(agent: MonitorAgent): boolean {
+  return agent.status === "idle" || agent.status === "error" || agent.status === "notLoaded";
+}
+
+function printMonitorCompletion(completion: MonitorCompletion): void {
+  console.log([completion.agent.id, completion.status, completion.turnId ?? ""].join("\t").trimEnd());
 }
 
 function oneLine(text: string): string {
