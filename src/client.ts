@@ -7,6 +7,7 @@ import type {
   ModelsResponse,
   RegisterRepoRequest,
   RegisterRepoResponse,
+  RemoveAgentResponse,
   StatusResponse,
   TeardownRepoRequest,
   TeardownRepoResponse,
@@ -73,6 +74,10 @@ export class OrchestraClient {
 
   interrupt(id: string) {
     return this.post(`/agents/${encodeURIComponent(id)}/interrupt`, {});
+  }
+
+  remove(id: string): Promise<RemoveAgentResponse> {
+    return this.post(`/agents/${encodeURIComponent(id)}/remove`, {});
   }
 
   exec(id: string, cmd: string) {

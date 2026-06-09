@@ -22,6 +22,7 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "GET", path: "/agents/:id/events", description: "Server-sent event stream for one agent." },
   { method: "POST", path: "/agents/:id/steer", description: "Send guidance to an agent." },
   { method: "POST", path: "/agents/:id/interrupt", description: "Interrupt an active agent turn." },
+  { method: "POST", path: "/agents/:id/remove", description: "Remove one managed agent and its workspace." },
   { method: "GET", path: "/agents/:id/turn", description: "Read current turn state and recent events." },
   { method: "GET", path: "/agents/:id/diff", description: "Read agent workspace diff." },
   { method: "POST", path: "/agents/:id/exec", description: "Run a command in an agent workspace." },
@@ -58,6 +59,10 @@ export type CreateAgentsRequest = {
 
 export type CreateAgentsResponse = {
   agents: ManagedAgent[];
+};
+
+export type RemoveAgentResponse = {
+  agent: ManagedAgent;
 };
 
 export type RegisterRepoRequest = {

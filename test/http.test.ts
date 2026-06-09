@@ -89,6 +89,42 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("removes one managed agent by id", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        dir: repo,
+        count: 2,
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    expect(created.agents).toHaveLength(2);
+    const removed = created.agents[0]!;
+    const kept = created.agents[1]!;
+
+    const removeResponse = await handler(jsonRequest(`http://127.0.0.1/agents/${removed.id}/remove`, {}));
+    expect(removeResponse.status).toBe(200);
+    const removedResponse = (await removeResponse.json()) as { agent: { id: string; cwd: string } };
+    expect(removedResponse.agent.id).toBe(removed.id);
+    expect(existsSync(removed.cwd)).toBe(false);
+    expect(existsSync(kept.cwd)).toBe(true);
+
+    const agentsResponse = await handler(new Request("http://127.0.0.1/agents"));
+    const remaining = (await agentsResponse.json()) as { agents: Array<{ id: string }> };
+    expect(remaining.agents.map((agent) => agent.id)).toEqual([kept.id]);
+
+    store.close();
+  });
+
   test("serves UI route map, config updates, and models", async () => {
     const root = tempRoot();
     const home = join(root, "home");

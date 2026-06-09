@@ -28,10 +28,12 @@ server.tool(
   "create",
   [
     "Create one or more isolated Codex agent workspaces.",
-    "Returns JSON { agents: [...] }; each agent has a 4-character lowercase hex id, cwd, branch, threadId, status, and timestamps.",
-    "When n > 1, returns n agents in that agents array, each with its own isolated workspace and id.",
+    "Return shape is always a JSON object with an agents array, never a bare id: { agents: [ManagedAgent, ...] }.",
+    "Each ManagedAgent includes id, repoId, repoPath, baseCommit, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
+    "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
+    "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
     `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden; approvalPolicy defaults to never and sandbox defaults to danger-full-access unless request fields override them.`,
-    "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
+    "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with remove or teardown.",
   ].join(" "),
   {
     dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
@@ -57,6 +59,10 @@ server.tool(
 
 server.tool("ls", "List Orchestra agents.", {}, async () => text(await get("/agents")));
 server.tool("status", "Show agents and pending approvals.", {}, async () => text(await get("/status")));
+
+server.tool("remove", "Remove one Orchestra-managed agent by id. If it has an active turn, that turn is interrupted first. Deletes the agent workspace directory and removes the managed-agent record. Returns JSON { agent: ManagedAgent } for the removed agent.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
+  text(await post(`/agents/${encodeURIComponent(id)}/remove`, {})),
+);
 
 server.tool("turn", "Show current turn state and recent events for an agent.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
   text(await get(`/agents/${encodeURIComponent(id)}/turn`)),

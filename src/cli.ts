@@ -53,6 +53,9 @@ async function main(): Promise<void> {
       case "teardown":
         await teardown(workspace, args);
         break;
+      case "remove":
+        await remove(workspace, args);
+        break;
       case "ls":
         ls(store);
         break;
@@ -141,6 +144,12 @@ async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<
   for (const agent of agents) {
     console.log(`removed ${agent.id}\t${agent.cwd}`);
   }
+}
+
+async function remove(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+  const id = required(args.positionals[0], "agent id");
+  const agent = await workspace.remove(id);
+  console.log(`removed ${agent.id}\t${agent.cwd}`);
 }
 
 function ls(store: OrchestraStore): void {
@@ -608,6 +617,7 @@ Usage:
   bun run src/cli.ts register <dir>
   bun run src/cli.ts create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
   bun run src/cli.ts teardown <dir>
+  bun run src/cli.ts remove <id>
   bun run src/cli.ts ls
   bun run src/cli.ts diff <id> [--out FILE]
   bun run src/cli.ts exec <id> "cmd"

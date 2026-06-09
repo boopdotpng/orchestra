@@ -140,6 +140,9 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     if (request.method === "POST" && parts[2] === "interrupt") {
       return jsonResponse(await deps.workspace.interrupt(id));
     }
+    if (request.method === "POST" && parts[2] === "remove") {
+      return jsonResponse({ agent: await deps.workspace.remove(id) });
+    }
     if (request.method === "GET" && parts[2] === "turn") {
       return jsonResponse(deps.workspace.turn(id));
     }

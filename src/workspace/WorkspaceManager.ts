@@ -125,13 +125,19 @@ export class WorkspaceManager {
     }
     const agents = this.store.listManagedAgentsForRepo(repo.id);
     for (const agent of agents) {
-      if (agent.activeTurnId) {
-        await this.manager.interrupt(agent.threadId, agent.activeTurnId).catch(() => undefined);
-      }
-      rmSync(agent.cwd, { recursive: true, force: true });
-      this.store.deleteManagedAgent(agent.id);
+      await this.remove(agent.id);
     }
     return agents;
+  }
+
+  async remove(id: string): Promise<ManagedAgent> {
+    const agent = this.requiredAgent(id);
+    if (agent.activeTurnId) {
+      await this.manager.interrupt(agent.threadId, agent.activeTurnId).catch(() => undefined);
+    }
+    rmSync(agent.cwd, { recursive: true, force: true });
+    this.store.deleteManagedAgent(agent.id);
+    return agent;
   }
 
   requiredAgent(id: string): ManagedAgent {
