@@ -7,15 +7,15 @@ import type { ManagedAgent, RepoRegistration, StartAgentOptions } from "../domai
 import { OrchestraStore } from "../store/OrchestraStore";
 
 export type WorkspaceManagerOptions = {
-  runsRoot?: string;
-  model?: string;
-  approvalPolicy?: StartAgentOptions["approvalPolicy"];
-  sandbox?: StartAgentOptions["sandbox"];
+  runsRoot?: string | undefined;
+  model?: string | undefined;
+  approvalPolicy?: StartAgentOptions["approvalPolicy"] | undefined;
+  sandbox?: StartAgentOptions["sandbox"] | undefined;
 };
 
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
-  count?: number;
-  prompt?: string;
+  count?: number | undefined;
+  prompt?: string | undefined;
 };
 
 export class WorkspaceManager {
