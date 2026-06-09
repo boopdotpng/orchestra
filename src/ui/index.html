@@ -53,7 +53,19 @@
     border-radius: 6px; padding: 6px 9px; width: 100%;
   }
   textarea { resize: vertical; font-family: var(--sans); }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,255,.12); }
+
+  /* custom dropdowns */
+  select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-color: var(--bg-elev2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center; background-size: 12px;
+    padding: 7px 30px 7px 11px; cursor: pointer;
+    transition: border-color .12s, background-color .12s, box-shadow .12s;
+  }
+  select:hover { border-color: #3a434f; background-color: #232b39; }
+  select option { background: var(--bg-elev); color: var(--text); }
   label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
   a { color: var(--accent); }
 
@@ -64,10 +76,18 @@
     border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
   .logo { font-weight: 700; font-size: 16px; letter-spacing: .02em; }
-  .logo .dot { color: var(--accent); }
-  .wd-picker { display: flex; align-items: center; gap: 8px; }
-  .wd-picker label { margin: 0; }
-  .wd-picker select { width: auto; min-width: 220px; max-width: 460px; font-family: var(--mono); font-size: 12.5px; }
+  .wd-divider { width: 1px; height: 22px; background: var(--border); }
+  .wd-picker { display: flex; align-items: center; gap: 0; background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 8px; padding: 0 4px 0 10px; transition: border-color .12s, box-shadow .12s; }
+  .wd-picker:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,255,.12); }
+  .wd-icon { color: var(--text-faint); flex-shrink: 0; }
+  .wd-picker select {
+    width: auto; min-width: 220px; max-width: 480px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    background-color: transparent; border: none; border-radius: 6px;
+  }
+  .wd-picker select:hover { background-color: transparent; }
+  .wd-picker select:focus { box-shadow: none; }
+  .wd-picker:hover { border-color: #3a434f; }
   header .spacer { flex: 1; }
   .conn { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-dim); }
   .conn .led { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
@@ -197,9 +217,10 @@
 </head>
 <body>
   <header>
-    <div class="logo">Orchestra<span class="dot">.</span></div>
-    <div class="wd-picker">
-      <label>Workdir</label>
+    <div class="logo">Orchestra</div>
+    <div class="wd-divider"></div>
+    <div class="wd-picker" title="Choose a workdir to monitor">
+      <svg class="wd-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <select id="wdSelect"><option>loading…</option></select>
     </div>
     <div class="spacer"></div>
