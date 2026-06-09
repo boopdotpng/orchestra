@@ -146,6 +146,12 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     if (request.method === "GET" && parts[2] === "turn") {
       return jsonResponse(deps.workspace.turn(id));
     }
+    if (request.method === "GET" && parts[2] === "history") {
+      return jsonResponse(deps.workspace.history(id));
+    }
+    if (request.method === "GET" && parts[2] === "thread") {
+      return jsonResponse(await deps.workspace.readThread(id));
+    }
     if (request.method === "GET" && parts[2] === "diff") {
       return textResponse(deps.workspace.diff(id));
     }

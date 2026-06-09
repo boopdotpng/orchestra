@@ -14,6 +14,7 @@ const port = Number(process.env.ORCHESTRA_PORT ?? "5751");
 const config = loadOrchestraConfig();
 
 const store = new OrchestraStore();
+store.resetTransientRuntimeState();
 const backend = new CodexV2Backend({ cwd: process.cwd(), args: codexAppServerArgs() });
 const manager = new AgentManager(backend, { store });
 const workspace = new WorkspaceManager(store, manager, {

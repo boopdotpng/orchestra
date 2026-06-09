@@ -1,5 +1,6 @@
 import type {
   AgentsResponse,
+  AgentHistoryResponse,
   ConfigResponse,
   ConfigUpdateRequest,
   CreateAgentsRequest,
@@ -62,6 +63,14 @@ export class OrchestraClient {
 
   turn(id: string) {
     return this.get(`/agents/${encodeURIComponent(id)}/turn`);
+  }
+
+  history(id: string): Promise<AgentHistoryResponse> {
+    return this.get(`/agents/${encodeURIComponent(id)}/history`);
+  }
+
+  thread(id: string) {
+    return this.get(`/agents/${encodeURIComponent(id)}/thread`);
   }
 
   diff(id: string): Promise<string> {

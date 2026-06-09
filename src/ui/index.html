@@ -277,6 +277,9 @@ const state = {
   config: null,
   models: [],
   lastUpdated: null,
+  detailLoadSeq: 0,
+  detailLoading: null,
+  detailPending: {},
 };
 
 // ---------- net ----------
@@ -465,6 +468,16 @@ function renderDetail() {
   renderPane();
 }
 
+function updateDetailChrome() {
+  if (state.view !== "detail") return;
+  const a = agentById(state.selected);
+  if (!a) return;
+  const badge = document.querySelector(".detail-head .badge");
+  if (badge) { badge.className = "badge " + a.status; badge.textContent = a.status.replace("_", " "); }
+  const interrupt = $("d_interrupt");
+  if (interrupt) interrupt.disabled = a.status !== "running";
+}
+
 function renderPane() {
   const pane = $("pane"); if (!pane) return;
   const a = agentById(state.selected); if (!a) return;
@@ -512,7 +525,14 @@ function applyDetailEvent(id, ev) {
     }
     case "item.completed": {
       const item = ev.item || {}; const t = String(item.type || item.itemType || "");
-      if (/command|exec|tool|patch|file/i.test(t)) { const s = summarizeItem(item); if (s) pushMsg(id, "event", s, t); }
+      const msg = messageFromThreadItem(item);
+      if (msg) {
+        const key = ev.itemId ? ev.itemId + ":" + msg.kind : "";
+        if (key && buf[key]) Object.assign(buf[key], msg);
+        else pushMsg(id, msg.kind, msg.text, msg.sub || t);
+      } else if (/command|exec|tool|patch|file/i.test(t)) {
+        const s = summarizeItem(item); if (s) pushMsg(id, "event", s, t);
+      }
       break;
     }
     case "turn.plan": if (ev.plan) pushMsg(id, "event", "Plan:\n" + planText(ev.plan) + (ev.explanation ? "\n\n" + ev.explanation : ""), "plan"); break;
@@ -523,7 +543,7 @@ function applyDetailEvent(id, ev) {
   }
 }
 function summarizeItem(item) {
-  if (item.command) return "$ " + (Array.isArray(item.command) ? item.command.join(" ") : item.command) + (item.output ? "\n" + String(item.output).slice(0, 800) : "");
+  if (item.command) return "$ " + (Array.isArray(item.command) ? item.command.join(" ") : item.command) + (item.output || item.aggregatedOutput ? "\n" + String(item.output || item.aggregatedOutput).slice(0, 800) : "");
   if (item.text) return String(item.text).slice(0, 800);
   if (item.path) return "edited " + item.path;
   return "";
@@ -534,14 +554,127 @@ function planText(plan) {
   return JSON.stringify(plan, null, 2);
 }
 
+function stringifyJson(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+function truncate(text, max = 6000) {
+  const s = String(text ?? "");
+  return s.length > max ? s.slice(0, max) + "\n… truncated …" : s;
+}
+function userInputText(content) {
+  if (!Array.isArray(content)) return stringifyJson(content);
+  return content.map((part) => {
+    if (typeof part === "string") return part;
+    if (!part || typeof part !== "object") return stringifyJson(part);
+    if (part.type === "text" && typeof part.text === "string") return part.text;
+    if (part.type === "inputText" && typeof part.text === "string") return part.text;
+    if (part.type === "inputImage" && typeof part.imageUrl === "string") return "[image] " + part.imageUrl;
+    return stringifyJson(part);
+  }).filter(Boolean).join("\n");
+}
+function threadMessages(payload) {
+  const thread = payload?.thread || payload;
+  const turns = Array.isArray(thread?.turns) ? thread.turns : [];
+  const msgs = [];
+  for (const turn of turns) {
+    const items = Array.isArray(turn?.items) ? turn.items : [];
+    for (const item of items) {
+      const built = messageFromThreadItem(item);
+      if (built) msgs.push(built);
+    }
+    if (turn?.status && turn.status !== "inProgress") {
+      msgs.push({ kind: "event", text: "— turn completed (" + turn.status + ") —", sub: turn.id || "" });
+    }
+  }
+  return msgs;
+}
+function messageFromThreadItem(item) {
+  if (!item || typeof item !== "object") return null;
+  switch (item.type) {
+    case "userMessage": {
+      const text = userInputText(item.content).trim();
+      return text ? { kind: "user", text } : null;
+    }
+    case "agentMessage":
+      return item.text ? { kind: "agent", text: item.text } : null;
+    case "reasoning": {
+      const text = [...(item.summary || []), ...(item.content || [])].join("\n").trim();
+      return text ? { kind: "reasoning", text } : null;
+    }
+    case "plan":
+      return item.text ? { kind: "event", text: "Plan:\n" + item.text, sub: "plan" } : null;
+    case "commandExecution": {
+      const output = item.aggregatedOutput || "";
+      const status = item.exitCode === null || item.exitCode === undefined ? item.status : "exit " + item.exitCode;
+      return { kind: "command", text: truncate("$ " + (item.command || "") + (output ? "\n\n" + output : "") + "\n\n[" + status + "]"), sub: item.cwd || "command" };
+    }
+    case "fileChange": {
+      const changes = (item.changes || []).map((c) => `${c.kind || "change"} ${c.path || ""}${c.diff ? "\n" + c.diff : ""}`).join("\n\n");
+      return { kind: "event", text: truncate(changes || "file change " + (item.status || "")), sub: "file change" };
+    }
+    case "mcpToolCall": {
+      const args = stringifyJson(item.arguments);
+      const result = item.error ? stringifyJson(item.error) : stringifyJson(item.result);
+      return { kind: "command", text: truncate(`${item.server || "mcp"}.${item.tool || "tool"}(${args})${result ? "\n\n" + result : ""}`), sub: item.status || "mcp tool" };
+    }
+    case "dynamicToolCall": {
+      const name = (item.namespace ? item.namespace + "." : "") + (item.tool || "tool");
+      const content = Array.isArray(item.contentItems) ? userInputText(item.contentItems) : "";
+      const details = content || stringifyJson(item.arguments);
+      return { kind: "command", text: truncate(`${name}(${stringifyJson(item.arguments)})${details ? "\n\n" + details : ""}`), sub: item.status || "tool" };
+    }
+    case "webSearch":
+      return { kind: "event", text: item.query || stringifyJson(item.action), sub: "web search" };
+    case "imageView":
+      return { kind: "event", text: item.path || "", sub: "image view" };
+    case "imageGeneration":
+      return { kind: "event", text: item.savedPath || item.result || item.revisedPrompt || item.status || "", sub: "image generation" };
+    case "collabAgentToolCall":
+      return { kind: "event", text: truncate(stringifyJson({ tool: item.tool, prompt: item.prompt, receivers: item.receiverThreadIds, status: item.status })), sub: "collab agent" };
+    case "hookPrompt":
+      return { kind: "event", text: truncate(stringifyJson(item.fragments)), sub: "hook" };
+    case "contextCompaction":
+      return { kind: "event", text: "Context compacted", sub: item.id || "" };
+    default:
+      return { kind: "event", text: truncate(stringifyJson(item)), sub: item.type || "item" };
+  }
+}
+
 // ---------- loaders ----------
 async function loadAgentDetail(id) {
+  const seq = ++state.detailLoadSeq;
+  state.detailLoading = id;
+  state.detailPending[id] = [];
+  const finishPending = () => {
+    const pending = state.detailPending[id] || [];
+    delete state.detailPending[id];
+    if (state.detailLoading === id) state.detailLoading = null;
+    pending.forEach((ev) => applyDetailEvent(id, ev));
+  };
   try {
-    const t = await api(`/agents/${encodeURIComponent(id)}/turn`);
+    const history = await api(`/agents/${encodeURIComponent(id)}/history`);
+    if (seq !== state.detailLoadSeq) return;
     state.convo[id] = []; state.streamBuf[id] = {};
-    (t.recent || []).forEach((ev) => applyDetailEvent(id, ev));
+    (history.events || []).forEach((ev) => applyDetailEvent(id, ev));
+    if (!state.convo[id].length) {
+      const thread = await api(`/agents/${encodeURIComponent(id)}/thread`);
+      if (seq !== state.detailLoadSeq) return;
+      state.convo[id] = threadMessages(thread); state.streamBuf[id] = {};
+    }
+    finishPending();
     if (state.selected === id && state.tab === "convo") renderPane();
-  } catch {}
+  } catch {
+    try {
+      const t = await api(`/agents/${encodeURIComponent(id)}/turn`);
+      if (seq !== state.detailLoadSeq) return;
+      state.convo[id] = []; state.streamBuf[id] = {};
+      (t.recent || []).forEach((ev) => applyDetailEvent(id, ev));
+      finishPending();
+      if (state.selected === id && state.tab === "convo") renderPane();
+    } catch {}
+  }
 }
 async function loadDiff(id, force) {
   if (state.diffs[id] !== undefined && !force) return;
@@ -575,6 +708,7 @@ async function readTranscript(id) {
 async function loadStatus() {
   try {
     const s = await api("/agents");
+    const wasDetail = state.view === "detail";
     state.agents = s.agents || [];
     const dirs = [...new Set(state.agents.map((a) => a.repoPath || "").filter(Boolean))].sort();
     state.workdirs = dirs;
@@ -582,7 +716,9 @@ async function loadStatus() {
     state.lastUpdated = Date.now();
     renderWorkdirs();
     if (state.view === "detail" && !agentById(state.selected)) { state.view = "grid"; state.selected = null; }
-    render();
+    if (state.view === "grid") renderGrid();
+    else if (wasDetail) updateDetailChrome();
+    else render();
   } catch (e) { setConn("down", "API error"); }
 }
 
@@ -663,7 +799,13 @@ function handleLiveEvent(ev) {
   const id = eventAgentId(ev); if (!id) return;
   noteLiveOutput(id, ev);
   if (state.view === "grid" && (agentById(id)?.repoPath || "") === state.workdir) patchCard(id);
-  if (state.view === "detail" && state.selected === id) { applyDetailEvent(id, ev); if (state.tab === "convo") renderPane(); }
+  if (state.view === "detail" && state.selected === id) {
+    if (state.detailLoading === id) {
+      (state.detailPending[id] = state.detailPending[id] || []).push(ev);
+      return;
+    }
+    applyDetailEvent(id, ev); if (state.tab === "convo") renderPane();
+  }
 }
 
 // ---------- boot ----------

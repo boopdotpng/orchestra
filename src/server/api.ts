@@ -23,6 +23,8 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "POST", path: "/agents/:id/steer", description: "Send guidance to an agent." },
   { method: "POST", path: "/agents/:id/interrupt", description: "Interrupt an active agent turn." },
   { method: "POST", path: "/agents/:id/remove", description: "Remove one managed agent and its workspace." },
+  { method: "GET", path: "/agents/:id/history", description: "Read all persisted events for one agent from oldest to newest." },
+  { method: "GET", path: "/agents/:id/thread", description: "Read the full Codex thread with turns." },
   { method: "GET", path: "/agents/:id/turn", description: "Read current turn state and recent events." },
   { method: "GET", path: "/agents/:id/diff", description: "Read agent workspace diff." },
   { method: "POST", path: "/agents/:id/exec", description: "Run a command in an agent workspace." },
@@ -90,3 +92,8 @@ export type StatusResponse = AgentsResponse & {
 export type ModelsResponse = Json;
 
 export type EventStreamMessage = AgentEvent | { type: "hello"; scope: "all" | "agent"; agentId?: string | undefined };
+
+export type AgentHistoryResponse = {
+  agent: ManagedAgent;
+  events: Json[];
+};

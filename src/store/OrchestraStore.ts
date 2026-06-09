@@ -313,11 +313,19 @@ export class OrchestraStore {
     this.db.query("DELETE FROM managed_agents WHERE id = ?").run(id);
   }
 
-  listEvents(threadId: string, limit = 100): Json[] {
-    const rows = this.db
-      .query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id DESC LIMIT ?")
-      .all(threadId, limit) as Row[];
-    return rows.reverse().map((row) => parseJson(row.payload_json) ?? {});
+  resetTransientRuntimeState(): void {
+    this.db
+      .query("UPDATE managed_agents SET active_turn_id = NULL, status = 'idle' WHERE status IN ('running', 'waiting_approval')")
+      .run();
+    this.db.query("UPDATE agents SET active_turn_id = NULL, status = 'idle' WHERE active_turn_id IS NOT NULL OR status = 'active'").run();
+  }
+
+  listEvents(threadId: string, limit?: number): Json[] {
+    const rows =
+      typeof limit === "number"
+        ? (this.db.query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id DESC LIMIT ?").all(threadId, limit) as Row[]).reverse()
+        : (this.db.query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id ASC").all(threadId) as Row[]);
+    return rows.map((row) => parseJson(row.payload_json) ?? {});
   }
 
   getTurn(turnId: string): Turn | undefined {

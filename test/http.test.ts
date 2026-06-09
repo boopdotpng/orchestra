@@ -125,6 +125,45 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("returns full agent event history from oldest to newest", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        dir: repo,
+        prompt: "ship it",
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; threadId: string }> };
+    const agent = created.agents[0]!;
+
+    backend.notifications.emit({
+      method: "item/agentMessage/delta",
+      params: { threadId: agent.threadId, turnId: "turn-1", itemId: "item-1", delta: "hello" },
+    });
+    backend.notifications.emit({
+      method: "item/completed",
+      params: { threadId: agent.threadId, turnId: "turn-1", item: { type: "agentMessage", id: "item-1", text: "hello" } },
+    });
+
+    const historyResponse = await handler(new Request(`http://127.0.0.1/agents/${agent.id}/history`));
+    expect(historyResponse.status).toBe(200);
+    const history = (await historyResponse.json()) as { events: Array<{ type: string; delta?: string }> };
+    expect(history.events.map((event) => event.type)).toEqual(["agent.started", "turn.started", "stream.agent", "item.completed"]);
+    expect(history.events[2]?.delta).toBe("hello");
+
+    store.close();
+  });
+
   test("serves UI route map, config updates, and models", async () => {
     const root = tempRoot();
     const home = join(root, "home");

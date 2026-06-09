@@ -109,6 +109,19 @@ export class WorkspaceManager {
     return path;
   }
 
+  async readThread(id: string): Promise<unknown> {
+    const agent = this.requiredAgent(id);
+    return this.manager.readThread(agent.threadId);
+  }
+
+  history(id: string): unknown {
+    const agent = this.requiredAgent(id);
+    return {
+      agent,
+      events: this.store.listEvents(agent.threadId),
+    };
+  }
+
   turn(id: string): unknown {
     const agent = this.requiredAgent(id);
     return {
