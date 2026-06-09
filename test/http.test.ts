@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -47,6 +47,44 @@ describe("Orchestra HTTP handler", () => {
     const status = (await statusResponse.json()) as { agents: unknown[]; approvals: unknown[] };
     expect(status.agents).toHaveLength(1);
     expect(status.approvals).toHaveLength(0);
+
+    store.close();
+  });
+
+  test("tears down managed agents for a repository", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        dir: repo,
+        count: 2,
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    expect(created.agents).toHaveLength(2);
+    for (const agent of created.agents) {
+      expect(existsSync(agent.cwd)).toBe(true);
+    }
+
+    const teardownResponse = await handler(jsonRequest("http://127.0.0.1/repos/teardown", { dir: repo }));
+    expect(teardownResponse.status).toBe(200);
+    const tornDown = (await teardownResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    expect(tornDown.agents.map((agent) => agent.id).sort()).toEqual(created.agents.map((agent) => agent.id).sort());
+    for (const agent of created.agents) {
+      expect(existsSync(agent.cwd)).toBe(false);
+    }
+
+    const agentsResponse = await handler(new Request("http://127.0.0.1/agents"));
+    const remaining = (await agentsResponse.json()) as { agents: unknown[] };
+    expect(remaining.agents).toHaveLength(0);
 
     store.close();
   });

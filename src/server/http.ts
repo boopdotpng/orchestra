@@ -96,6 +96,12 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return jsonResponse(deps.workspace.register(requiredString(body.dir, "dir")));
   }
 
+  if (request.method === "POST" && url.pathname === "/repos/teardown") {
+    const body = await readBody(request);
+    const agents = await deps.workspace.teardown(requiredString(body.dir, "dir"));
+    return jsonResponse({ agents });
+  }
+
   if (request.method === "GET" && url.pathname === "/agents") {
     return jsonResponse({ agents: deps.store.listManagedAgents() });
   }

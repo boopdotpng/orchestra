@@ -15,6 +15,7 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "GET", path: "/models", description: "List available Codex models and service tiers." },
   { method: "GET", path: "/events", description: "Server-sent event stream for live agent events." },
   { method: "POST", path: "/repos/register", description: "Register a source repository." },
+  { method: "POST", path: "/repos/teardown", description: "Remove managed agents and workspaces for a source repository." },
   { method: "GET", path: "/agents", description: "List managed agents." },
   { method: "POST", path: "/agents", description: "Create one or more managed agents." },
   { method: "GET", path: "/agents/:id", description: "Read one managed agent." },
@@ -64,6 +65,14 @@ export type RegisterRepoRequest = {
 };
 
 export type RegisterRepoResponse = RepoRegistration;
+
+export type TeardownRepoRequest = {
+  dir: string;
+};
+
+export type TeardownRepoResponse = {
+  agents: ManagedAgent[];
+};
 
 export type AgentsResponse = {
   agents: ManagedAgent[];

@@ -8,6 +8,8 @@ import type {
   RegisterRepoRequest,
   RegisterRepoResponse,
   StatusResponse,
+  TeardownRepoRequest,
+  TeardownRepoResponse,
 } from "./server/api";
 
 export class OrchestraClient {
@@ -39,6 +41,10 @@ export class OrchestraClient {
 
   register(input: RegisterRepoRequest): Promise<RegisterRepoResponse> {
     return this.post("/repos/register", input);
+  }
+
+  teardown(input: TeardownRepoRequest): Promise<TeardownRepoResponse> {
+    return this.post("/repos/teardown", input);
   }
 
   agents(): Promise<AgentsResponse> {

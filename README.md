@@ -141,7 +141,8 @@ The MCP server talks to the local Orchestra HTTP service, so the systemd service
 MCP tools:
 
 - `register`: pin a source repo base commit.
-- `create`: create one or more isolated agent workspaces.
+- `teardown`: remove Orchestra-managed agents and workspaces for a registered source repo.
+- `create`: create one or more isolated agent workspaces. Returns `{ agents: [...] }`; agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in that array.
 - `ls`: list managed agents.
 - `status`: show agents and pending approvals.
 - `turn`: show current turn state and recent events for one agent.
@@ -153,6 +154,8 @@ MCP tools:
 - `approvals`: list pending approvals.
 - `approve`: approve a pending request.
 - `deny`: deny a pending request.
+
+Agents persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with `teardown`. The default MCP-backed service config is `model = "gpt-5.5"` and `serviceTier = "default"` unless config files override it; new agents default to `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless the request overrides them. `steer` starts a new turn when the agent is idle, or interleaves guidance into the tracked active turn when it is running; `exec` is a separate workspace shell command and can run while a turn is active.
 
 Manual registration commands:
 
