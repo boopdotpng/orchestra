@@ -17,7 +17,8 @@ export type WorkspaceManagerOptions = {
 
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
   count?: number | undefined;
-  prompt?: string | undefined;
+  prompt: string;
+  onComplete?: string | undefined;
 };
 
 export class WorkspaceManager {
@@ -25,7 +26,13 @@ export class WorkspaceManager {
     private readonly store: OrchestraStore,
     private readonly manager: AgentManager,
     private defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier"> = {},
-  ) {}
+  ) {
+    manager.onEvent((event) => {
+      if (event.type === "turn.completed") {
+        this.runCompletionHook(event.threadId);
+      }
+    });
+  }
 
   updateDefaults(defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier">): void {
     this.defaults = defaults;
@@ -44,7 +51,7 @@ export class WorkspaceManager {
     });
   }
 
-  async create(dir: string, options: CreateAgentsOptions = {}): Promise<ManagedAgent[]> {
+  async create(dir: string, options: CreateAgentsOptions): Promise<ManagedAgent[]> {
     const repo = this.register(dir);
     const count = options.count ?? 1;
     const agents: ManagedAgent[] = [];
@@ -143,6 +150,21 @@ export class WorkspaceManager {
     return agents;
   }
 
+  async teardownTarget(target: string): Promise<ManagedAgent[]> {
+    const trimmed = target.trim();
+    if (trimmed === "all") {
+      const agents = this.store.listManagedAgents();
+      for (const agent of agents) {
+        await this.remove(agent.id);
+      }
+      return agents;
+    }
+    if (/^[0-9a-f]{4}$/i.test(trimmed) && this.store.getManagedAgent(trimmed.toLowerCase())) {
+      return [await this.remove(trimmed.toLowerCase())];
+    }
+    return this.teardown(trimmed);
+  }
+
   async remove(id: string): Promise<ManagedAgent> {
     const agent = this.requiredAgent(id);
     if (agent.activeTurnId) {
@@ -188,20 +210,52 @@ export class WorkspaceManager {
       activeTurnId: undefined,
       status: "idle",
       createdAt: Math.floor(Date.now() / 1000),
+      onComplete: options.onComplete,
     };
     this.store.insertManagedAgent(managed);
-    if (options.prompt) {
-      const turn = await this.manager.startTurn(thread.threadId, options.prompt, {
-        cwd,
-        model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
-        serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
-        approvalPolicy: options.approvalPolicy,
-        sandbox: options.sandbox,
-        personality: "friendly",
-      });
-      this.store.insertManagedAgent({ ...managed, activeTurnId: turn.turnId, status: "running" });
-    }
+    const turn = await this.manager.startTurn(thread.threadId, options.prompt, {
+      cwd,
+      model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
+      serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
+      approvalPolicy: options.approvalPolicy,
+      sandbox: options.sandbox,
+      personality: "friendly",
+    });
+    this.store.insertManagedAgent({ ...managed, activeTurnId: turn.turnId, status: "running" });
     return this.store.getManagedAgent(id) ?? managed;
+  }
+
+  private runCompletionHook(threadId: string): void {
+    const agent = this.store.listManagedAgents().find((candidate) => candidate.threadId === threadId);
+    if (!agent?.onComplete) {
+      return;
+    }
+    const hook = agent.onComplete;
+    const value = (input: string) =>
+      input
+        .replaceAll("<id>", agent.id)
+        .replaceAll("{id}", agent.id)
+        .replaceAll("$ORCHESTRA_AGENT_ID", agent.id)
+        .replaceAll("$ORCHESTRA_THREAD_ID", agent.threadId);
+    if (/^https?:\/\//i.test(hook)) {
+      void fetch(value(hook), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId: agent.id, threadId: agent.threadId, cwd: agent.cwd, status: agent.status }),
+      }).catch(() => undefined);
+      return;
+    }
+    void Bun.spawn(["bash", "-lc", value(hook)], {
+      cwd: agent.cwd,
+      env: {
+        ...process.env,
+        ORCHESTRA_AGENT_ID: agent.id,
+        ORCHESTRA_THREAD_ID: agent.threadId,
+        ORCHESTRA_AGENT_CWD: agent.cwd,
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited.catch(() => undefined);
   }
 }
 

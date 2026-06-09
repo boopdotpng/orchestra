@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -49,6 +49,33 @@ describe("WorkspaceManager", () => {
     expect(backend.startedThreads[0]?.sandbox).toBe("danger-full-access");
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
+
+    store.close();
+  });
+
+  test("runs completion hook when a managed turn completes", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const done = join(root, "done");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      runsRoot: runs,
+      prompt: "hello agent",
+      onComplete: `mkdir -p ${done} && touch ${done}/{id}`,
+    });
+    const agent = agents[0]!;
+    backend.notifications.emit({
+      method: "turn/completed",
+      params: { threadId: agent.threadId, turn: { id: agent.activeTurnId, status: "completed" } },
+    });
+
+    await waitFor(() => existsSync(join(done, agent.id)));
 
     store.close();
   });
@@ -160,4 +187,14 @@ function run(cmd: string[], cwd?: string): string {
     throw new Error(proc.stderr.toString());
   }
   return proc.stdout.toString().trim();
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error("timed out waiting for predicate");
 }

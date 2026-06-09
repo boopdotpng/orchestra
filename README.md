@@ -170,7 +170,7 @@ claude mcp add -s user orchestra -- /home/boop/.bun/bin/bun run /path/to/orchest
 Run commands with:
 
 ```bash
-bun run src/cli.ts <command>
+orchestra <command>
 ```
 
 Global options:
@@ -180,134 +180,111 @@ Global options:
 - `--config PATH`: load config from a specific TOML file.
 - `--transport proxy|stdio`: Codex app-server transport. Default: `proxy`.
 - `--db PATH`: SQLite database path. Default: `~/.orchestra/orchestra.db`.
-- `--approval POLICY`: `untrusted`, `on-failure`, `on-request`, or `never`.
-- `--sandbox MODE`: `read-only`, `workspace-write`, or `danger-full-access`.
 
 ### Workspace Commands
 
 These are the main commands for multi-agent work.
 
 ```bash
-bun run src/cli.ts register <dir>
+orchestra create <dir> -n 4 --prompt "try four approaches"
+orchestra create <dir> --prompt-file prompt.md
 ```
 
-Pins a Git repository for Orchestra. The current commit becomes the base commit used when creating agent workspaces.
+Creates one or more isolated workspaces from the repo. Each agent gets a short id, its own worktree copy, and a branch named `orchestra/<id>`. A prompt is required so every created agent has an initial turn.
 
 ```bash
-bun run src/cli.ts create <dir> -n 4 --prompt "try four approaches"
-bun run src/cli.ts create <dir> --prompt-file prompt.md
+orchestra status
 ```
 
-Creates one or more isolated workspaces from the registered repo. Each agent gets a short id, its own worktree copy, and a branch named `orchestra/<id>`. If `--prompt` or `--prompt-file` is provided, Orchestra immediately starts a turn for each agent.
+Prints enriched status for all managed agents, including last assistant tail, turn count, token usage, last activity, and pending approvals.
 
 ```bash
-bun run src/cli.ts ls
+orchestra teardown <id>
+orchestra teardown <workdir>
+orchestra teardown all
 ```
 
-Lists managed agents as `id`, status, repo path, branch, and workspace path.
+Destroys one agent by id, all agents for a source workdir, or every managed agent.
 
 ```bash
-bun run src/cli.ts remove <id>
-```
-
-Removes one managed agent, interrupting its active turn if needed, deleting its workspace directory, and removing its managed-agent record.
-
-```bash
-bun run src/cli.ts steer <id> "run tests and fix failures"
+orchestra steer <id> "run tests and fix failures"
 ```
 
 Sends guidance to an agent. If the agent is idle, this starts a new turn. If the agent is already running, this steers the active turn.
 
 ```bash
-bun run src/cli.ts turn <id>
-```
-
-Prints the current turn state and recent stored events for an agent as JSON.
-
-```bash
-bun run src/cli.ts read <id>
-bun run src/cli.ts read <id> --json
-```
-
-Writes a readable transcript for the agent and prints the transcript file path. With `--json`, the transcript file contains structured JSON.
-
-```bash
-bun run src/cli.ts tail <id>
-```
-
-Prints current turn events and, if the agent has an active turn, streams output until that turn completes.
-
-```bash
-bun run src/cli.ts diff <id>
-bun run src/cli.ts diff <id> --out patch.diff
+orchestra diff <id>
+orchestra diff <id> --out patch.diff
 ```
 
 Shows the Git diff for an agent workspace, or writes it to a file with `--out`.
 
 ```bash
-bun run src/cli.ts exec <id> "bun test"
+orchestra exec <id> "bun test"
 ```
 
 Runs a shell command inside the agent workspace and exits with the command exit code.
 
 ```bash
-bun run src/cli.ts interrupt <id>
+orchestra interrupt <id>
 ```
 
 Interrupts the agent's active turn.
 
 ```bash
-bun run src/cli.ts teardown <dir>
+orchestra monitor <id>
+orchestra monitor <workdir>
+orchestra monitor <workdir> --follow
 ```
 
-Removes Orchestra workspaces for a registered repo and marks the agents removed.
+Prints one line per meaningful live agent event from the running Orchestra service. With an agent id, it exits when that agent is idle. With a workdir, it exits when all agents in that workdir are idle. Add `--follow` to keep watching.
 
-### Lower-Level Thread Commands
+### Debug Commands
 
-These commands operate closer to Codex app-server threads and do not create Orchestra-managed repo workspaces.
+These commands are kept for local debugging and app-server plumbing; the MCP tool surface does not expose them.
 
 ```bash
-bun run src/cli.ts daemon start
-bun run src/cli.ts daemon enable-remote-control
+orchestra daemon start
+orchestra daemon enable-remote-control
 ```
 
 Pass-through helpers for `codex app-server daemon`.
 
 ```bash
-bun run src/cli.ts run "fix the tests" --cwd .
+orchestra run "fix the tests" --cwd .
 ```
 
 Starts a Codex thread, sends one prompt, streams the turn, and exits when the turn completes.
 
 ```bash
-bun run src/cli.ts start --cwd . --name "experiment"
+orchestra start --cwd . --name "experiment"
 ```
 
 Starts a Codex thread and prints its JSON metadata.
 
 ```bash
-bun run src/cli.ts send THREAD_ID "next task"
+orchestra send THREAD_ID "next task"
 ```
 
 Sends a prompt to an existing Codex thread and streams the response.
 
 ```bash
-bun run src/cli.ts list --cwd .
+orchestra list --cwd .
 ```
 
 Lists Codex threads, optionally filtered by cwd. Add `--archived` to include archived threads.
 
 ```bash
-bun run src/cli.ts thread-read THREAD_ID
-bun run src/cli.ts thread-steer THREAD_ID TURN_ID "guidance"
-bun run src/cli.ts thread-interrupt THREAD_ID [TURN_ID]
+orchestra thread-read THREAD_ID
+orchestra thread-steer THREAD_ID TURN_ID "guidance"
+orchestra thread-interrupt THREAD_ID [TURN_ID]
 ```
 
 Reads, steers, or interrupts app-server threads directly.
 
 ```bash
-bun run src/cli.ts approvals
-bun run src/cli.ts models
+orchestra approvals
+orchestra models
 ```
 
 Lists pending approvals stored by Orchestra, or lists available Codex models and service tiers.

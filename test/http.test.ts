@@ -65,6 +65,7 @@ describe("Orchestra HTTP handler", () => {
       jsonRequest("http://127.0.0.1/agents", {
         dir: repo,
         count: 2,
+        prompt: "work",
       }),
     );
     expect(createResponse.status).toBe(200);
@@ -103,6 +104,7 @@ describe("Orchestra HTTP handler", () => {
       jsonRequest("http://127.0.0.1/agents", {
         dir: repo,
         count: 2,
+        prompt: "work",
       }),
     );
     expect(createResponse.status).toBe(200);
@@ -121,6 +123,28 @@ describe("Orchestra HTTP handler", () => {
     const agentsResponse = await handler(new Request("http://127.0.0.1/agents"));
     const remaining = (await agentsResponse.json()) as { agents: Array<{ id: string }> };
     expect(remaining.agents.map((agent) => agent.id)).toEqual([kept.id]);
+
+    store.close();
+  });
+
+  test("rejects managed agent creation without a prompt", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        dir: repo,
+      }),
+    );
+    expect(createResponse.status).toBe(500);
+    const body = (await createResponse.json()) as { error: string };
+    expect(body.error).toContain("prompt is required");
 
     store.close();
   });

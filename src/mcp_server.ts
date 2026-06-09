@@ -11,20 +11,6 @@ const server = new McpServer({
 });
 
 server.tool(
-  "register",
-  "Pin a source repository base commit for future Orchestra agents.",
-  { dir: z.string().describe("Path inside the source git repository to register.") },
-  async ({ dir }) => text(await post("/repos/register", { dir })),
-);
-
-server.tool(
-  "teardown",
-  "Remove Orchestra-managed agents and workspaces for a registered source repository. Pass a path inside the source repo; returns JSON { agents: [...] } for the removed agents. Active turns are interrupted before their workspace directories are deleted.",
-  { dir: z.string().describe("Path inside the registered source git repository whose managed agent workspaces should be removed.") },
-  async ({ dir }) => text(await post("/repos/teardown", { dir })),
-);
-
-server.tool(
   "create",
   [
     "Create one or more isolated Codex agent workspaces.",
@@ -32,40 +18,40 @@ server.tool(
     "Each ManagedAgent includes id, repoId, repoPath, baseCommit, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
     "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
-    `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden; approvalPolicy defaults to never and sandbox defaults to danger-full-access unless request fields override them.`,
-    "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with remove or teardown.",
+    "A prompt is required; create always starts the first turn so no dead idle agents are created.",
+    `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
+    "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
   ].join(" "),
   {
     dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
     n: z.number().int().positive().default(1).describe("Number of agents to create. Values greater than 1 fan out and return multiple ids in agents[]."),
-    prompt: z.string().optional().describe("Optional first-turn prompt. If omitted, the agent is created idle and can be started with steer."),
-    model: z.string().optional().describe(`Model override for created agents and optional first turns. Omit to use service config, defaulting to ${DEFAULT_MODEL}.`),
+    prompt: z.string().min(1).describe("Required first-turn prompt."),
+    onComplete: z.string().optional().describe("Optional shell command or webhook URL to run when each turn completes. The placeholders {id} and <id> are replaced with the agent id."),
+    model: z.string().optional().describe(`Model override. Omit to use service config, defaulting to ${DEFAULT_MODEL}.`),
     serviceTier: z
       .enum(["default", "priority"])
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
-    approvalPolicy: z
-      .enum(["untrusted", "on-failure", "on-request", "never"])
-      .optional()
-      .describe("Approval policy for new agents. Omit to use Orchestra's default of never."),
-    sandbox: z
-      .enum(["read-only", "workspace-write", "danger-full-access"])
-      .optional()
-      .describe("Sandbox mode for new agents. Omit to use Orchestra's default of danger-full-access."),
   },
-  async ({ dir, n, prompt, model, serviceTier, approvalPolicy, sandbox }) =>
-    text(await post("/agents", { dir, count: n, prompt, model, serviceTier, approvalPolicy, sandbox })),
+  async ({ dir, n, prompt, onComplete, model, serviceTier }) => text(await post("/agents", { dir, count: n, prompt, onComplete, model, serviceTier })),
 );
 
-server.tool("ls", "List Orchestra agents.", {}, async () => text(await get("/agents")));
-server.tool("status", "Show agents and pending approvals.", {}, async () => text(await get("/status")));
-
-server.tool("remove", "Remove one Orchestra-managed agent by id. If it has an active turn, that turn is interrupted first. Deletes the agent workspace directory and removes the managed-agent record. Returns JSON { agent: ManagedAgent } for the removed agent.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
-  text(await post(`/agents/${encodeURIComponent(id)}/remove`, {})),
+server.tool(
+  "status",
+  [
+    "Show enriched status for all agents, including last message tail, turn counts, token usage, last activity, and any pending approvals.",
+    "For Claude Code monitoring, run `orchestra monitor <agent-id>` for one agent or `orchestra monitor <workdir>` to wait for every agent in a workdir.",
+    "That monitor command prints one line per meaningful agent event and exits once the watched agent or workdir is idle unless `--follow` is passed.",
+  ].join(" "),
+  {},
+  async () => text(await get("/status")),
 );
 
-server.tool("turn", "Show current turn state and recent events for an agent.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
-  text(await get(`/agents/${encodeURIComponent(id)}/turn`)),
+server.tool(
+  "teardown",
+  "Destroy Orchestra-managed agents and their workspaces. Pass a 4-character agent id, a source workdir path to remove every agent for that workdir, or the literal target 'all' to remove every managed agent.",
+  { target: z.string().describe("Agent id, source workdir path, or literal 'all'.") },
+  async ({ target }) => text(await post("/teardown", { target })),
 );
 
 server.tool("diff", "Get git diff for an agent workspace.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) => ({
@@ -104,27 +90,6 @@ server.tool(
 
 server.tool("interrupt", "Interrupt an agent's active turn.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
   text(await post(`/agents/${encodeURIComponent(id)}/interrupt`)),
-);
-
-server.tool("read", "Write an agent transcript to /tmp/orchestra and return its path.", { id: z.string().describe("4-character lowercase hex agent id returned by create."), json: z.boolean().default(false).describe("Write JSON instead of Markdown.") }, async ({
-  id,
-  json,
-}) => text(await post(`/agents/${encodeURIComponent(id)}/read`, { json })));
-
-server.tool("approvals", "List pending approvals across all agents.", {}, async () => text(await get("/approvals")));
-
-server.tool(
-  "approve",
-  "Approve a pending command or file-change request.",
-  {
-    requestId: z.string().describe("Request id from approvals or status."),
-    decision: z.enum(["accept", "acceptForSession", "decline", "cancel"]).default("accept"),
-  },
-  async ({ requestId, decision }) => text(await post(`/approvals/${encodeURIComponent(requestId)}/respond`, { decision })),
-);
-
-server.tool("deny", "Deny a pending approval request.", { requestId: z.string().describe("Request id from approvals or status.") }, async ({ requestId }) =>
-  text(await post(`/approvals/${encodeURIComponent(requestId)}/deny`)),
 );
 
 await server.connect(new StdioServerTransport());

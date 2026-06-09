@@ -10,6 +10,7 @@ import type {
   RegisterRepoResponse,
   RemoveAgentResponse,
   StatusResponse,
+  TeardownRequest,
   TeardownRepoRequest,
   TeardownRepoResponse,
 } from "./server/api";
@@ -47,6 +48,10 @@ export class OrchestraClient {
 
   teardown(input: TeardownRepoRequest): Promise<TeardownRepoResponse> {
     return this.post("/repos/teardown", input);
+  }
+
+  teardownTarget(input: TeardownRequest): Promise<TeardownRepoResponse> {
+    return this.post("/teardown", input);
   }
 
   agents(): Promise<AgentsResponse> {

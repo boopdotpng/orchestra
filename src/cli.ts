@@ -27,6 +27,10 @@ async function main(): Promise<void> {
     await runDaemonCommand(args.positionals[0] ?? "status");
     return;
   }
+  if (args.command === "monitor") {
+    await monitor(args);
+    return;
+  }
 
   const config = loadOrchestraConfig({
     path: typeof args.flags.config === "string" ? args.flags.config : undefined,
@@ -49,6 +53,9 @@ async function main(): Promise<void> {
         break;
       case "create":
         await create(workspace, args, config);
+        break;
+      case "status":
+        status(store);
         break;
       case "teardown":
         await teardown(workspace, args);
@@ -124,7 +131,7 @@ function register(workspace: WorkspaceManager, args: ParsedArgs): void {
 
 async function create(workspace: WorkspaceManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
   const dir = required(args.positionals[0], "dir");
-  const prompt = promptFlag(args);
+  const prompt = required(promptFlag(args), "prompt");
   const createOptions = {
     count: flagNumber(args.flags.n) ?? 1,
     model: modelFlag(args, config),
@@ -132,17 +139,39 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
   };
-  const agents = await workspace.create(dir, prompt ? { ...createOptions, prompt } : createOptions);
+  const agents = await workspace.create(dir, { ...createOptions, prompt });
   for (const agent of agents) {
     console.log(`${agent.id}\t${agent.status}\t${agent.cwd}\t${agent.threadId}`);
   }
 }
 
 async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
-  const dir = required(args.positionals[0], "dir");
-  const agents = await workspace.teardown(dir);
+  const target = required(args.positionals[0], "target");
+  const agents = await workspace.teardownTarget(target);
   for (const agent of agents) {
     console.log(`removed ${agent.id}\t${agent.cwd}`);
+  }
+}
+
+function status(store: OrchestraStore): void {
+  const agents = store.listManagedAgentSummaries();
+  if (!agents.length) {
+    console.log("no agents");
+    return;
+  }
+  const rows = agents.map((agent) => ({
+    id: agent.id,
+    status: agent.status,
+    turns: String(agent.turnCount),
+    tokens: agent.tokensUsed === undefined ? "-" : compactNumber(agent.tokensUsed),
+    activity: relativeTime(agent.lastActivityAt),
+    workdir: shortPath(agent.repoPath ?? agent.cwd),
+    last: oneLine(agent.lastAssistantMessageTail ?? agent.lastTurnSummary ?? "-"),
+  }));
+  printTable(rows, ["id", "status", "turns", "tokens", "activity", "workdir", "last"]);
+  const pending = store.listPendingApprovals();
+  if (pending.length) {
+    console.log(`\npending approvals: ${pending.length}`);
   }
 }
 
@@ -528,6 +557,258 @@ function printApprovals(approvals: Approval[]): void {
   }
 }
 
+type MonitorAgent = {
+  id: string;
+  repoPath?: string | undefined;
+  threadId: string;
+  status: string;
+  lastAssistantMessageTail?: string | undefined;
+};
+
+async function monitor(args: ParsedArgs): Promise<void> {
+  const baseUrl = orchestraUrl(args);
+  const idFilter = typeof args.flags.id === "string" ? args.flags.id : args.positionals[0] && /^[0-9a-f]{4}$/i.test(args.positionals[0]) ? args.positionals[0] : undefined;
+  const workdirFilter =
+    typeof args.flags.workdir === "string"
+      ? resolve(args.flags.workdir)
+      : !idFilter && args.positionals[0] && args.positionals[0] !== "all"
+        ? resolve(args.positionals[0])
+        : undefined;
+  const exitWhenIdle = args.flags.until === "never" || args.flags.follow === true ? false : true;
+  const agents = await fetchMonitorAgents(baseUrl, idFilter, workdirFilter);
+  if (!agents.size) {
+    console.log(`monitor no matching agents${idFilter ? ` id=${idFilter}` : ""}${workdirFilter ? ` workdir=${workdirFilter}` : ""}`);
+    return;
+  }
+  for (const agent of agents.values()) {
+    printMonitorLine(agent.id, `status ${agent.status}${agent.lastAssistantMessageTail ? ` · ${oneLine(agent.lastAssistantMessageTail)}` : ""}`);
+  }
+  if (exitWhenIdle && allMonitorAgentsIdle(agents)) {
+    console.log("monitor done");
+    return;
+  }
+
+  const response = await fetch(new URL("/events", baseUrl));
+  if (!response.ok || !response.body) {
+    throw new Error(`monitor failed to connect to ${baseUrl}/events: ${response.status} ${await response.text()}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      return;
+    }
+    buffer += decoder.decode(chunk.value, { stream: true });
+    let split = buffer.indexOf("\n\n");
+    while (split >= 0) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      const event = parseSseFrame(frame);
+      if (event) {
+        handleMonitorEvent(event, agents);
+        if (exitWhenIdle && allMonitorAgentsIdle(agents)) {
+          console.log("monitor done");
+          await reader.cancel();
+          return;
+        }
+      }
+      split = buffer.indexOf("\n\n");
+    }
+  }
+}
+
+async function fetchMonitorAgents(baseUrl: string, idFilter?: string, workdirFilter?: string): Promise<Map<string, MonitorAgent>> {
+  const response = await fetch(new URL("/status", baseUrl));
+  if (!response.ok) {
+    throw new Error(`monitor failed to read status from ${baseUrl}: ${response.status} ${await response.text()}`);
+  }
+  const status = (await response.json()) as { agents?: MonitorAgent[] };
+  const agents = new Map<string, MonitorAgent>();
+  for (const agent of status.agents ?? []) {
+    if (idFilter && agent.id !== idFilter) {
+      continue;
+    }
+    if (workdirFilter && agent.repoPath !== workdirFilter) {
+      continue;
+    }
+    agents.set(agent.id, agent);
+  }
+  return agents;
+}
+
+function handleMonitorEvent(event: Record<string, unknown>, agents: Map<string, MonitorAgent>): void {
+  const agent = [...agents.values()].find((candidate) => monitorEventThreadId(event) === candidate.threadId);
+  if (!agent) {
+    return;
+  }
+  const type = typeof event.type === "string" ? event.type : "";
+  if (type === "turn.started") {
+    agent.status = "running";
+    printMonitorLine(agent.id, `turn started ${monitorTurnId(event) ?? ""}`.trim());
+    return;
+  }
+  if (type === "turn.completed") {
+    agent.status = monitorTurnStatus(event) === "failed" ? "error" : "idle";
+    printMonitorLine(agent.id, `turn completed ${monitorTurnStatus(event) ?? "done"} ${monitorTurnId(event) ?? ""}`.trim());
+    return;
+  }
+  if (type === "agent.status") {
+    const status = typeof event.status === "string" ? event.status : "";
+    agent.status = status === "active" ? "running" : status === "systemError" ? "error" : status;
+    printMonitorLine(agent.id, `status ${agent.status}`);
+    return;
+  }
+  if (type === "approval.requested") {
+    agent.status = "waiting_approval";
+    printMonitorLine(agent.id, "approval requested");
+    return;
+  }
+  if (type === "item.completed") {
+    const item = event.item && typeof event.item === "object" && !Array.isArray(event.item) ? (event.item as Record<string, unknown>) : {};
+    const itemType = typeof item.type === "string" ? item.type : "";
+    if (itemType === "agentMessage" && typeof item.text === "string") {
+      agent.lastAssistantMessageTail = item.text;
+      printMonitorLine(agent.id, `assistant ${oneLine(item.text)}`);
+    } else if (itemType === "commandExecution") {
+      printMonitorLine(agent.id, `command ${item.status ?? "completed"} ${oneLine(typeof item.command === "string" ? item.command : "")}`.trim());
+    } else if (itemType) {
+      printMonitorLine(agent.id, `item ${itemType}`);
+    }
+    return;
+  }
+  if (type === "error") {
+    agent.status = "error";
+    printMonitorLine(agent.id, "error");
+  }
+}
+
+function parseSseFrame(frame: string): Record<string, unknown> | undefined {
+  const data = frame
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (!data) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function monitorEventThreadId(event: Record<string, unknown>): string | undefined {
+  if (typeof event.threadId === "string") {
+    return event.threadId;
+  }
+  const agent = event.agent && typeof event.agent === "object" && !Array.isArray(event.agent) ? (event.agent as Record<string, unknown>) : undefined;
+  if (typeof agent?.threadId === "string") {
+    return agent.threadId;
+  }
+  const approval = event.approval && typeof event.approval === "object" && !Array.isArray(event.approval) ? (event.approval as Record<string, unknown>) : undefined;
+  return typeof approval?.threadId === "string" ? approval.threadId : undefined;
+}
+
+function monitorTurnId(event: Record<string, unknown>): string | undefined {
+  const turn = event.turn && typeof event.turn === "object" && !Array.isArray(event.turn) ? (event.turn as Record<string, unknown>) : undefined;
+  return typeof turn?.turnId === "string" ? turn.turnId : undefined;
+}
+
+function monitorTurnStatus(event: Record<string, unknown>): string | undefined {
+  const turn = event.turn && typeof event.turn === "object" && !Array.isArray(event.turn) ? (event.turn as Record<string, unknown>) : undefined;
+  return typeof turn?.status === "string" ? turn.status : undefined;
+}
+
+function allMonitorAgentsIdle(agents: Map<string, MonitorAgent>): boolean {
+  return [...agents.values()].every((agent) => agent.status === "idle" || agent.status === "error" || agent.status === "notLoaded");
+}
+
+function printMonitorLine(id: string, text: string): void {
+  console.log(`${new Date().toISOString()}\t${id}\t${text}`);
+}
+
+function oneLine(text: string): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  return cleaned.length > 300 ? cleaned.slice(0, 300) : cleaned;
+}
+
+function shortPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 2 ? parts.slice(-2).join("/") : path;
+}
+
+function compactNumber(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}K`;
+  }
+  return String(value);
+}
+
+function relativeTime(ms: number | undefined): string {
+  if (!ms) {
+    return "-";
+  }
+  const delta = Date.now() - ms;
+  if (delta < 0) {
+    return "now";
+  }
+  const seconds = Math.floor(delta / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) {
+    return `${hours}h`;
+  }
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function printTable(rows: Array<Record<string, string>>, columns: string[]): void {
+  const widths = Object.fromEntries(columns.map((column) => [column, column.length]));
+  for (const row of rows) {
+    for (const column of columns) {
+      widths[column] = Math.max(widths[column] ?? 0, Math.min((row[column] ?? "").length, column === "last" ? 80 : 32));
+    }
+  }
+  console.log(columns.map((column) => column.padEnd(widths[column] ?? column.length)).join("  "));
+  console.log(columns.map((column) => "-".repeat(widths[column] ?? column.length)).join("  "));
+  for (const row of rows) {
+    console.log(
+      columns
+        .map((column) => {
+          const limit = column === "last" ? 80 : 32;
+          const text = ellipsize(row[column] ?? "", limit);
+          return text.padEnd(widths[column] ?? column.length);
+        })
+        .join("  "),
+    );
+  }
+}
+
+function ellipsize(text: string, max: number): string {
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "..." : text;
+}
+
+function orchestraUrl(args: ParsedArgs): string {
+  if (typeof args.flags.url === "string") {
+    return args.flags.url;
+  }
+  const host = process.env.ORCHESTRA_HOST ?? "127.0.0.1";
+  const port = Number(process.env.ORCHESTRA_PORT ?? "5751");
+  return process.env.ORCHESTRA_URL ?? `http://${host}:${port}`;
+}
+
 async function runDaemonCommand(command: string): Promise<void> {
   const args =
     command === "start"
@@ -614,31 +895,14 @@ function printHelp(): void {
   console.log(`orchestra
 
 Usage:
-  bun run src/cli.ts register <dir>
-  bun run src/cli.ts create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
-  bun run src/cli.ts teardown <dir>
-  bun run src/cli.ts remove <id>
-  bun run src/cli.ts ls
-  bun run src/cli.ts diff <id> [--out FILE]
-  bun run src/cli.ts exec <id> "cmd"
-  bun run src/cli.ts steer <id> "guidance"
-  bun run src/cli.ts interrupt <id>
-  bun run src/cli.ts turn <id>
-  bun run src/cli.ts read <id> [--json]
-  bun run src/cli.ts tail <id>
-
-Lower-level thread commands:
-  bun run src/cli.ts daemon start
-  bun run src/cli.ts daemon enable-remote-control
-  bun run src/cli.ts run "fix the tests" [--cwd .] [--model MODEL] [--approval on-request] [--sandbox workspace-write] [--yes]
-  bun run src/cli.ts start [--cwd .] [--name NAME]
-  bun run src/cli.ts send THREAD_ID "next task"
-  bun run src/cli.ts list [--cwd .] [--archived]
-  bun run src/cli.ts thread-read THREAD_ID
-  bun run src/cli.ts thread-steer THREAD_ID TURN_ID "guidance"
-  bun run src/cli.ts thread-interrupt THREAD_ID [TURN_ID]
-  bun run src/cli.ts approvals
-  bun run src/cli.ts models
+  orchestra create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
+  orchestra status
+  orchestra teardown <id|workdir|all>
+  orchestra diff <id> [--out FILE]
+  orchestra exec <id> "cmd"
+  orchestra steer <id> "guidance"
+  orchestra interrupt <id>
+  orchestra monitor <id|workdir> [--follow]
 
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
@@ -646,8 +910,6 @@ Options:
   --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml
   --transport proxy|stdio   default: proxy
   --db PATH                 default: ~/.orchestra/orchestra.db
-  --approval POLICY         untrusted | on-failure | on-request | never
-  --sandbox MODE            read-only | workspace-write | danger-full-access
 `);
 }
 

@@ -46,6 +46,16 @@ export type ManagedAgent = {
   activeTurnId?: string | undefined;
   status: ManagedAgentStatus;
   createdAt: number;
+  onComplete?: string | undefined;
+};
+
+export type ManagedAgentSummary = ManagedAgent & {
+  lastTurnSummary?: string | undefined;
+  lastAssistantMessageTail?: string | undefined;
+  turnCount: number;
+  tokensUsed?: number | undefined;
+  lastActivityAt?: number | undefined;
+  pendingApprovals: Approval[];
 };
 
 export type Agent = {

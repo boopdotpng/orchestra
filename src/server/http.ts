@@ -54,7 +54,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "GET" && url.pathname === "/status") {
     return jsonResponse({
-      agents: deps.store.listManagedAgents(),
+      agents: deps.store.listManagedAgentSummaries(),
       approvals: deps.store.listPendingApprovals(),
     });
   }
@@ -102,16 +102,22 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return jsonResponse({ agents });
   }
 
+  if (request.method === "POST" && url.pathname === "/teardown") {
+    const body = await readBody(request);
+    return jsonResponse({ agents: await deps.workspace.teardownTarget(requiredString(body.target, "target")) });
+  }
+
   if (request.method === "GET" && url.pathname === "/agents") {
     return jsonResponse({ agents: deps.store.listManagedAgents() });
   }
 
   if (request.method === "POST" && url.pathname === "/agents") {
     const body = await readBody(request);
-    const prompt = typeof body.prompt === "string" ? body.prompt : undefined;
+    const prompt = requiredString(body.prompt, "prompt");
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
       count: typeof body.count === "number" ? body.count : 1,
-      ...(prompt ? { prompt } : {}),
+      prompt,
+      onComplete: typeof body.onComplete === "string" ? body.onComplete : typeof body.on_complete === "string" ? body.on_complete : undefined,
       model: typeof body.model === "string" ? body.model : undefined,
       serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
       approvalPolicy: approvalPolicy(body.approvalPolicy),

@@ -9,6 +9,7 @@ import type {
   Approval,
   Json,
   ManagedAgent,
+  ManagedAgentSummary,
   ManagedAgentStatus,
   RepoRegistration,
   RuntimeStatus,
@@ -113,9 +114,11 @@ export class OrchestraStore {
         thread_id TEXT NOT NULL UNIQUE,
         active_turn_id TEXT,
         status TEXT NOT NULL,
+        on_complete TEXT,
         created_at INTEGER NOT NULL
       );
     `);
+    this.addColumnIfMissing("managed_agents", "on_complete", "TEXT");
   }
 
   applyEvent(event: AgentEvent): void {
@@ -253,15 +256,16 @@ export class OrchestraStore {
   insertManagedAgent(agent: ManagedAgent): void {
     this.db
       .query(
-        `INSERT INTO managed_agents (id, repo_id, cwd, branch, thread_id, active_turn_id, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO managed_agents (id, repo_id, cwd, branch, thread_id, active_turn_id, status, on_complete, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           repo_id = excluded.repo_id,
           cwd = excluded.cwd,
           branch = excluded.branch,
           thread_id = excluded.thread_id,
           active_turn_id = excluded.active_turn_id,
-          status = excluded.status`,
+          status = excluded.status,
+          on_complete = excluded.on_complete`,
       )
       .run(
         agent.id,
@@ -271,6 +275,7 @@ export class OrchestraStore {
         agent.threadId,
         agent.activeTurnId ?? null,
         agent.status,
+        agent.onComplete ?? null,
         agent.createdAt,
       );
   }
@@ -295,6 +300,31 @@ export class OrchestraStore {
       )
       .all() as Row[];
     return rows.map(managedAgentFromRow);
+  }
+
+  listManagedAgentSummaries(): ManagedAgentSummary[] {
+    const pending = new Map<string, Approval[]>();
+    for (const approval of this.listPendingApprovals()) {
+      if (!approval.threadId) {
+        continue;
+      }
+      const approvals = pending.get(approval.threadId) ?? [];
+      approvals.push(approval);
+      pending.set(approval.threadId, approvals);
+    }
+    return this.listManagedAgents().map((agent) => {
+      const agentRow = this.getAgent(agent.threadId);
+      const events = this.listEvents(agent.threadId);
+      return {
+        ...agent,
+        lastTurnSummary: lastTurnSummary(events),
+        lastAssistantMessageTail: tail(lastAssistantMessage(events)),
+        turnCount: this.turnCount(agent.threadId, events),
+        tokensUsed: tokensUsed(agentRow?.tokenUsage),
+        lastActivityAt: this.lastActivityAt(agent.threadId) ?? agent.createdAt * 1000,
+        pendingApprovals: pending.get(agent.threadId) ?? [],
+      };
+    });
   }
 
   listManagedAgentsForRepo(repoId: number): ManagedAgent[] {
@@ -481,6 +511,27 @@ export class OrchestraStore {
       .query("UPDATE approvals SET status = 'resolved', response_json = ?, resolved_at_ms = ? WHERE request_id = ?")
       .run(JSON.stringify(response), Date.now(), String(requestId));
   }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const columns = new Set((this.db.query(`PRAGMA table_info(${table})`).all() as Row[]).map((row) => String(row.name)));
+    if (!columns.has(column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  private turnCount(threadId: string, events: Json[]): number {
+    const row = this.db.query("SELECT COUNT(*) AS count FROM turns WHERE thread_id = ?").get(threadId) as Row | undefined;
+    const count = typeof row?.count === "number" ? row.count : Number(row?.count ?? 0);
+    if (count > 0) {
+      return count;
+    }
+    return new Set(events.map((event) => readNestedString(event, "turn", "turnId") ?? readString(event, "turnId")).filter(Boolean)).size;
+  }
+
+  private lastActivityAt(threadId: string): number | undefined {
+    const row = this.db.query("SELECT MAX(created_at_ms) AS last_activity_at FROM events WHERE thread_id = ?").get(threadId) as Row | undefined;
+    return optionalNumber(row?.last_activity_at);
+  }
 }
 
 function defaultDbPath(): string {
@@ -537,6 +588,7 @@ function managedAgentFromRow(row: Row): ManagedAgent {
     activeTurnId: optionalString(row.active_turn_id),
     status: (optionalString(row.status) ?? "notLoaded") as ManagedAgentStatus,
     createdAt: Number(row.created_at),
+    onComplete: optionalString(row.on_complete),
   };
 }
 
@@ -593,15 +645,87 @@ function asRecord(value: Json | undefined): Record<string, Json | undefined> | u
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
 
-function readString(value: Json, key: string): string | undefined {
+function readString(value: Json | undefined, key: string): string | undefined {
   const record = asRecord(value);
   const nested = record?.[key];
   return typeof nested === "string" ? nested : undefined;
 }
 
-function readNestedString(value: Json, objectKey: string, key: string): string | undefined {
+function readNestedString(value: Json | undefined, objectKey: string, key: string): string | undefined {
   const record = asRecord(value);
   const nested = asRecord(record?.[objectKey]);
   const result = nested?.[key];
   return typeof result === "string" ? result : undefined;
+}
+
+function lastAssistantMessage(events: Json[]): string | undefined {
+  const streams = new Map<string, string>();
+  let latest = "";
+  for (const event of events) {
+    const type = readString(event, "type");
+    if (type === "stream.agent") {
+      const itemId = readString(event, "itemId");
+      const delta = readString(event, "delta") ?? "";
+      if (itemId) {
+        const next = (streams.get(itemId) ?? "") + delta;
+        streams.set(itemId, next);
+        latest = next;
+      }
+      continue;
+    }
+    if (type === "item.completed") {
+      const item = asRecord(asRecord(event)?.item);
+      if (readString(item, "type") === "agentMessage") {
+        latest = readString(item, "text") ?? latest;
+      }
+    }
+  }
+  return latest || undefined;
+}
+
+function lastTurnSummary(events: Json[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const type = readString(event, "type");
+    if (type !== "turn.started" && type !== "turn.completed") {
+      continue;
+    }
+    const turn = asRecord(asRecord(event)?.turn);
+    const status = readString(turn, "status") ?? (type === "turn.started" ? "inProgress" : "completed");
+    const turnId = readString(turn, "turnId");
+    const message = tail(lastAssistantMessage(events.slice(0, index + 1)), 160);
+    return [type === "turn.started" ? "started" : "completed", status, turnId, message].filter(Boolean).join(" · ");
+  }
+  return undefined;
+}
+
+function tail(text: string | undefined, max = 500): string | undefined {
+  if (!text) {
+    return undefined;
+  }
+  const trimmed = text.trim();
+  return trimmed.length > max ? trimmed.slice(-max) : trimmed;
+}
+
+function tokensUsed(value: Json | undefined): number | undefined {
+  const total = findTokenTotal(value);
+  return total === undefined || !Number.isFinite(total) ? undefined : total;
+}
+
+function findTokenTotal(value: Json | undefined): number | undefined {
+  if (value === undefined || value === null || typeof value !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    const nested = value.map(findTokenTotal).filter((n): n is number => typeof n === "number");
+    return nested.length ? nested.reduce((sum, n) => sum + n, 0) : undefined;
+  }
+  const record = value as Record<string, Json | undefined>;
+  for (const key of ["totalTokens", "total_tokens", "tokensUsed", "tokens_used"]) {
+    if (typeof record[key] === "number") {
+      return record[key];
+    }
+  }
+  const nested = Object.values(record).map(findTokenTotal).filter((n): n is number => typeof n === "number");
+  return nested.length ? nested.reduce((sum, n) => sum + n, 0) : undefined;
 }
