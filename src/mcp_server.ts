@@ -18,17 +18,18 @@ server.tool(
 
 server.tool(
   "create",
-  "Create one or more isolated Codex agent workspaces. Returns quickly with Orchestra ids.",
+  "Create one or more isolated Codex agent workspaces. Uses service config defaults unless model/serviceTier are provided.",
   {
     dir: z.string(),
     n: z.number().int().positive().default(1),
     prompt: z.string().optional(),
     model: z.string().optional(),
+    serviceTier: z.enum(["default", "priority"]).optional(),
     approvalPolicy: z.enum(["untrusted", "on-failure", "on-request", "never"]).optional(),
     sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   },
-  async ({ dir, n, prompt, model, approvalPolicy, sandbox }) =>
-    text(await post("/agents", { dir, count: n, prompt, model, approvalPolicy, sandbox })),
+  async ({ dir, n, prompt, model, serviceTier, approvalPolicy, sandbox }) =>
+    text(await post("/agents", { dir, count: n, prompt, model, serviceTier, approvalPolicy, sandbox })),
 );
 
 server.tool("ls", "List Orchestra agents.", {}, async () => text(await get("/agents")));
@@ -51,9 +52,9 @@ server.tool(
 
 server.tool(
   "steer",
-  "Send guidance to an agent. Starts a new turn when idle, steers when running.",
-  { id: z.string(), input: z.string(), model: z.string().optional() },
-  async ({ id, input, model }) => text(await post(`/agents/${encodeURIComponent(id)}/steer`, { input, model })),
+  "Send guidance to an agent. Starts a new turn when idle, steers when running. Uses service config defaults unless model/serviceTier are provided.",
+  { id: z.string(), input: z.string(), model: z.string().optional(), serviceTier: z.enum(["default", "priority"]).optional() },
+  async ({ id, input, model, serviceTier }) => text(await post(`/agents/${encodeURIComponent(id)}/steer`, { input, model, serviceTier })),
 );
 
 server.tool("interrupt", "Interrupt an agent's active turn.", { id: z.string() }, async ({ id }) =>

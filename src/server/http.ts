@@ -2,6 +2,7 @@ import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import type { Json } from "../domain/types";
+import { normalizeServiceTier } from "../config";
 
 export type OrchestraHttpDeps = {
   store: OrchestraStore;
@@ -55,6 +56,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
       count: typeof body.count === "number" ? body.count : 1,
       ...(prompt ? { prompt } : {}),
       model: typeof body.model === "string" ? body.model : undefined,
+      serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
       approvalPolicy: approvalPolicy(body.approvalPolicy),
       sandbox: sandboxMode(body.sandbox),
     });
@@ -70,6 +72,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
       const body = await readBody(request);
       return jsonResponse(await deps.workspace.steer(id, requiredString(body.input, "input"), {
         model: typeof body.model === "string" ? body.model : undefined,
+        serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
         approvalPolicy: approvalPolicy(body.approvalPolicy),
         sandbox: sandboxMode(body.sandbox),
       }));
@@ -155,4 +158,8 @@ function approvalPolicy(value: unknown) {
 
 function sandboxMode(value: unknown) {
   return value === "read-only" || value === "workspace-write" || value === "danger-full-access" ? value : undefined;
+}
+
+function serviceTier(value: unknown) {
+  return normalizeServiceTier(value);
 }

@@ -57,6 +57,29 @@ journalctl --user -u orchestra -f
 
 The HTTP service defaults to `http://127.0.0.1:5751`. Override with `ORCHESTRA_HOST` and `ORCHESTRA_PORT`.
 
+## Config
+
+Orchestra loads a small TOML config for defaults used by the CLI, HTTP service, and MCP server. Lookup order:
+
+1. `--config PATH` for CLI commands
+2. `ORCHESTRA_CONFIG=/path/to/orchestra.toml`
+3. `./orchestra.toml`
+4. `~/.orchestra/config.toml`
+
+The repo includes a safe default `orchestra.toml`:
+
+```toml
+model = "gpt-5.5"
+fast_mode = false
+```
+
+Config keys:
+
+- `model`: default model for new agents and turns.
+- `fast_mode`: `false` sends app-server `serviceTier: "default"`; `true` sends `serviceTier: "priority"`.
+
+You can also use `service_tier = "default"` or `service_tier = "priority"` if you want the app-server value to be explicit. CLI `--model` and `--service-tier` override the config for that command. MCP `create` and `steer` can also pass `model` or `serviceTier`; when omitted, the service config is used.
+
 ## MCP
 
 The project MCP template is `.mcp.json`. It runs:
@@ -101,6 +124,8 @@ bun run src/cli.ts <command>
 Global options:
 
 - `--model MODEL`: model for new threads or turns. Default: `gpt-5.5`.
+- `--service-tier TIER`: app-server service tier, `default` or `priority`.
+- `--config PATH`: load config from a specific TOML file.
 - `--transport proxy|stdio`: Codex app-server transport. Default: `proxy`.
 - `--db PATH`: SQLite database path. Default: `~/.orchestra/orchestra.db`.
 - `--approval POLICY`: `untrusted`, `on-failure`, `on-request`, or `never`.

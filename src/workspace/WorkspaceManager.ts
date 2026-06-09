@@ -3,13 +3,14 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentManager } from "../manager/AgentManager";
-import { DEFAULT_MODEL } from "../config";
+import { DEFAULT_MODEL, DEFAULT_SERVICE_TIER } from "../config";
 import type { ManagedAgent, RepoRegistration, StartAgentOptions } from "../domain/types";
 import { OrchestraStore } from "../store/OrchestraStore";
 
 export type WorkspaceManagerOptions = {
   runsRoot?: string | undefined;
   model?: string | undefined;
+  serviceTier?: StartAgentOptions["serviceTier"] | undefined;
   approvalPolicy?: StartAgentOptions["approvalPolicy"] | undefined;
   sandbox?: StartAgentOptions["sandbox"] | undefined;
 };
@@ -23,6 +24,7 @@ export class WorkspaceManager {
   constructor(
     private readonly store: OrchestraStore,
     private readonly manager: AgentManager,
+    private readonly defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier"> = {},
   ) {}
 
   register(dir: string): RepoRegistration {
@@ -56,7 +58,8 @@ export class WorkspaceManager {
         ? await this.manager.steer(agent.threadId, agent.activeTurnId, input)
         : await this.manager.send(agent.threadId, input, {
             cwd: agent.cwd,
-            model: options.model ?? DEFAULT_MODEL,
+            model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
+            serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
             approvalPolicy: options.approvalPolicy,
             sandbox: options.sandbox,
             personality: "friendly",
@@ -145,7 +148,8 @@ export class WorkspaceManager {
 
     const thread = await this.manager.startAgent({
       cwd,
-      model: options.model ?? DEFAULT_MODEL,
+      model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
+      serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
       approvalPolicy: options.approvalPolicy ?? "on-request",
       sandbox: options.sandbox ?? "workspace-write",
       personality: "friendly",
@@ -166,7 +170,8 @@ export class WorkspaceManager {
     if (options.prompt) {
       const turn = await this.manager.startTurn(thread.threadId, options.prompt, {
         cwd,
-        model: options.model ?? DEFAULT_MODEL,
+        model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
+        serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
         approvalPolicy: options.approvalPolicy,
         sandbox: options.sandbox,
         personality: "friendly",

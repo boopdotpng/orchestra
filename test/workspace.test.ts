@@ -25,7 +25,10 @@ describe("WorkspaceManager", () => {
     const store = new OrchestraStore(join(root, "orchestra.db"));
     const backend = new FakeBackend();
     const manager = new AgentManager(backend, { store });
-    const workspace = new WorkspaceManager(store, manager);
+    const workspace = new WorkspaceManager(store, manager, {
+      model: "gpt-6",
+      serviceTier: "priority",
+    });
     initGitRepo(source);
 
     const repo = workspace.register(source);
@@ -40,7 +43,8 @@ describe("WorkspaceManager", () => {
     expect(agent.id).toMatch(/^[0-9a-f]{4}$/);
     expect(agent.cwd.startsWith(runs)).toBe(true);
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
-    expect(backend.startedThreads[0]?.model).toBe("gpt-5.5");
+    expect(backend.startedThreads[0]?.model).toBe("gpt-6");
+    expect(backend.startedThreads[0]?.serviceTier).toBe("priority");
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
 
@@ -51,8 +55,8 @@ describe("WorkspaceManager", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
-  startedThreads: Array<{ cwd?: string | undefined; model?: string | undefined }> = [];
-  startedTurns: Array<{ threadId: string; input: string }> = [];
+  startedThreads: Array<{ cwd?: string | undefined; model?: string | undefined; serviceTier?: string | undefined }> = [];
+  startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
   private threadCount = 0;
 
   async connect() {}
@@ -66,7 +70,7 @@ class FakeBackend implements CodexBackend {
   async initialize() {
     return {};
   }
-  async startThread(options: { cwd?: string | undefined; model?: string | undefined }) {
+  async startThread(options: { cwd?: string | undefined; model?: string | undefined; serviceTier?: string | undefined }) {
     this.threadCount += 1;
     this.startedThreads.push(options);
     return {
@@ -100,8 +104,8 @@ class FakeBackend implements CodexBackend {
   async unarchiveThread() {
     return {};
   }
-  async startTurn(threadId: string, input: string) {
-    this.startedTurns.push({ threadId, input });
+  async startTurn(threadId: string, input: string, options: { model?: string | undefined; serviceTier?: string | undefined } = {}) {
+    this.startedTurns.push({ threadId, input, model: options.model, serviceTier: options.serviceTier });
     return { turn: { id: `turn-${this.startedTurns.length}`, status: "inProgress" } };
   }
   async steerTurn() {

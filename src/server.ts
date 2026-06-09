@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
+import { loadOrchestraConfig } from "./config";
 import { AgentManager } from "./manager/AgentManager";
 import { createOrchestraHandler } from "./server/http";
 import { OrchestraStore } from "./store/OrchestraStore";
@@ -10,11 +11,15 @@ import { WorkspaceManager } from "./workspace/WorkspaceManager";
 
 const host = process.env.ORCHESTRA_HOST ?? "127.0.0.1";
 const port = Number(process.env.ORCHESTRA_PORT ?? "5751");
+const config = loadOrchestraConfig();
 
 const store = new OrchestraStore();
 const backend = new CodexV2Backend({ cwd: process.cwd(), args: codexAppServerArgs() });
 const manager = new AgentManager(backend, { store });
-const workspace = new WorkspaceManager(store, manager);
+const workspace = new WorkspaceManager(store, manager, {
+  model: config.model,
+  serviceTier: config.serviceTier,
+});
 
 await manager.connect();
 

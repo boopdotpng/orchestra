@@ -14,6 +14,7 @@ import type { TurnSteerParams } from "../../../bindings/codex-v2/v2/TurnSteerPar
 import type { UserInput } from "../../../bindings/codex-v2/v2/UserInput";
 import type { CodexBackend, SendTurnOptions } from "../CodexBackend";
 import type { Json, StartAgentOptions } from "../../domain/types";
+import { DEFAULT_SERVICE_TIER } from "../../config";
 import { JsonRpcProcess } from "./JsonRpcProcess";
 
 export type CodexV2BackendOptions = {
@@ -71,7 +72,7 @@ export class CodexV2Backend implements CodexBackend {
     const params: ThreadStartParams = {
       cwd: options.cwd ?? null,
       model: options.model ?? null,
-      serviceTier: NORMAL_SERVICE_TIER,
+      serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
       approvalPolicy: (options.approvalPolicy ?? "on-request") as AskForApproval,
       sandbox: (options.sandbox ?? "workspace-write") as WireSandboxMode,
       personality: (options.personality ?? "friendly") as WirePersonality,
@@ -87,7 +88,7 @@ export class CodexV2Backend implements CodexBackend {
       threadId,
       cwd: options.cwd ?? null,
       model: options.model ?? null,
-      serviceTier: NORMAL_SERVICE_TIER,
+      serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
       approvalPolicy: (options.approvalPolicy ?? null) as AskForApproval | null,
       sandbox: (options.sandbox ?? null) as WireSandboxMode | null,
       personality: (options.personality ?? null) as WirePersonality | null,
@@ -138,7 +139,7 @@ export class CodexV2Backend implements CodexBackend {
       input: [textInput(input)],
       cwd: options.cwd ?? null,
       model: options.model ?? null,
-      serviceTier: NORMAL_SERVICE_TIER,
+      serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
       approvalPolicy: (options.approvalPolicy ?? null) as AskForApproval | null,
       personality: (options.personality ?? null) as WirePersonality | null,
     };
@@ -167,8 +168,6 @@ export class CodexV2Backend implements CodexBackend {
     this.rpc.respond(requestId, result);
   }
 }
-
-const NORMAL_SERVICE_TIER = "default";
 
 function textInput(text: string): UserInput {
   return {

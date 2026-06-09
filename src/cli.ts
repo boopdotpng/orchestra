@@ -7,7 +7,7 @@ import { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
 import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
 import { readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
-import { DEFAULT_MODEL } from "./config";
+import { DEFAULT_MODEL, loadOrchestraConfig, normalizeServiceTier, type OrchestraConfig } from "./config";
 import type { AgentEvent, Approval, ApprovalPolicy, SandboxMode, StartAgentOptions } from "./domain/types";
 
 type ParsedArgs = {
@@ -28,13 +28,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  const config = loadOrchestraConfig({
+    path: typeof args.flags.config === "string" ? args.flags.config : undefined,
+  });
   const store = new OrchestraStore(typeof args.flags.db === "string" ? args.flags.db : undefined);
   const backend = new CodexV2Backend({
     args: transportArgs(args),
     cwd: process.cwd(),
   });
   const manager = new AgentManager(backend, { store });
-  const workspace = new WorkspaceManager(store, manager);
+  const workspace = new WorkspaceManager(store, manager, {
+    model: config.model,
+    serviceTier: config.serviceTier,
+  });
 
   try {
     switch (args.command) {
@@ -42,7 +48,7 @@ async function main(): Promise<void> {
         register(workspace, args);
         break;
       case "create":
-        await create(workspace, args);
+        await create(workspace, args, config);
         break;
       case "teardown":
         await teardown(workspace, args);
@@ -63,13 +69,13 @@ async function main(): Promise<void> {
         await tail(manager, workspace, args);
         break;
       case "run":
-        await run(manager, args);
+        await run(manager, args, config);
         break;
       case "start":
-        await start(manager, args);
+        await start(manager, args, config);
         break;
       case "send":
-        await send(manager, args);
+        await send(manager, args, config);
         break;
       case "list":
         await list(manager, args);
@@ -81,7 +87,7 @@ async function main(): Promise<void> {
         await interrupt(workspace, args);
         break;
       case "steer":
-        await steer(workspace, args);
+        await steer(workspace, args, config);
         break;
       case "thread-read":
         await threadRead(manager, args);
@@ -113,12 +119,13 @@ function register(workspace: WorkspaceManager, args: ParsedArgs): void {
   console.log(JSON.stringify(workspace.register(dir), null, 2));
 }
 
-async function create(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+async function create(workspace: WorkspaceManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
   const dir = required(args.positionals[0], "dir");
   const prompt = promptFlag(args);
   const createOptions = {
     count: flagNumber(args.flags.n) ?? 1,
-    model: modelFlag(args),
+    model: modelFlag(args, config),
+    serviceTier: serviceTierFlag(args, config),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
   };
@@ -164,14 +171,15 @@ function execAgent(workspace: WorkspaceManager, args: ParsedArgs): void {
   process.exitCode = result.exitCode;
 }
 
-async function steer(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
+async function steer(workspace: WorkspaceManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
   const id = required(args.positionals[0], "agent id");
   const prompt = args.positionals.slice(1).join(" ");
   if (!prompt) {
     throw new Error("steer requires guidance text");
   }
   const result = await workspace.steer(id, prompt, {
-    model: modelFlag(args),
+    model: modelFlag(args, config),
+    serviceTier: serviceTierFlag(args, config),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
   });
@@ -205,9 +213,9 @@ async function tail(manager: AgentManager, workspace: WorkspaceManager, args: Pa
   }
 }
 
-async function run(manager: AgentManager, args: ParsedArgs): Promise<void> {
+async function run(manager: AgentManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
   const prompt = promptFrom(args);
-  const options = startOptions(args);
+  const options = startOptions(args, config);
   const autoApprove = Boolean(args.flags.yes);
   const agent = await manager.startAgent(options);
   console.log(`thread ${agent.threadId}`);
@@ -221,12 +229,12 @@ async function run(manager: AgentManager, args: ParsedArgs): Promise<void> {
   await turnDone;
 }
 
-async function start(manager: AgentManager, args: ParsedArgs): Promise<void> {
-  const agent = await manager.startAgent(startOptions(args));
+async function start(manager: AgentManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
+  const agent = await manager.startAgent(startOptions(args, config));
   console.log(JSON.stringify(agent, null, 2));
 }
 
-async function send(manager: AgentManager, args: ParsedArgs): Promise<void> {
+async function send(manager: AgentManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
   const threadId = required(args.positionals[0], "thread id");
   const prompt = args.positionals.slice(1).join(" ");
   if (!prompt) {
@@ -237,7 +245,7 @@ async function send(manager: AgentManager, args: ParsedArgs): Promise<void> {
     stream: true,
     autoApprove,
   });
-  const turn = await manager.send(threadId, prompt, sendOptions(args));
+  const turn = await manager.send(threadId, prompt, sendOptions(args, config));
   console.log(`turn ${turn.turnId}\n`);
   await turnDone;
 }
@@ -439,10 +447,11 @@ async function promptForPermissions(manager: AgentManager, approval: Approval): 
   }
 }
 
-function startOptions(args: ParsedArgs): StartAgentOptions {
+function startOptions(args: ParsedArgs, config: OrchestraConfig): StartAgentOptions {
   return {
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : process.cwd(),
-    model: modelFlag(args),
+    model: modelFlag(args, config),
+    serviceTier: serviceTierFlag(args, config),
     name: typeof args.flags.name === "string" ? args.flags.name : undefined,
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
@@ -450,18 +459,23 @@ function startOptions(args: ParsedArgs): StartAgentOptions {
   };
 }
 
-function sendOptions(args: ParsedArgs) {
+function sendOptions(args: ParsedArgs, config: OrchestraConfig) {
   return {
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : undefined,
-    model: modelFlag(args),
+    model: modelFlag(args, config),
+    serviceTier: serviceTierFlag(args, config),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
     personality: "friendly" as const,
   };
 }
 
-function modelFlag(args: ParsedArgs): string {
-  return typeof args.flags.model === "string" ? args.flags.model : DEFAULT_MODEL;
+function modelFlag(args: ParsedArgs, config: OrchestraConfig): string {
+  return typeof args.flags.model === "string" ? args.flags.model : config.model;
+}
+
+function serviceTierFlag(args: ParsedArgs, config: OrchestraConfig): OrchestraConfig["serviceTier"] {
+  return normalizeServiceTier(args.flags["service-tier"]) ?? config.serviceTier;
 }
 
 function promptFlag(args: ParsedArgs): string | undefined {
@@ -618,6 +632,8 @@ Lower-level thread commands:
 
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
+  --service-tier TIER       default | priority
+  --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml
   --transport proxy|stdio   default: proxy
   --db PATH                 default: ~/.orchestra/orchestra.db
   --approval POLICY         untrusted | on-failure | on-request | never

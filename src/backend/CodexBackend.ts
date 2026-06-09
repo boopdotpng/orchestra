@@ -5,6 +5,7 @@ import type {
   Json,
   Personality,
   SandboxMode,
+  ServiceTier,
   StartAgentOptions,
 } from "../domain/types";
 import type { Unsubscribe } from "../domain/events";
@@ -12,6 +13,7 @@ import type { Unsubscribe } from "../domain/events";
 export type SendTurnOptions = {
   cwd?: string | undefined;
   model?: string | undefined;
+  serviceTier?: ServiceTier | undefined;
   approvalPolicy?: ApprovalPolicy | undefined;
   sandbox?: SandboxMode | undefined;
   personality?: Personality | undefined;

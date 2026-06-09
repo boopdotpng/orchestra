@@ -40,6 +40,34 @@ describe("CodexV2Backend", () => {
     expect(messages.find((message) => message.method === "thread/resume")?.params.serviceTier).toBe("default");
     expect(messages.find((message) => message.method === "turn/start")?.params.serviceTier).toBe("default");
   });
+
+  test("passes configured priority service tier to app-server requests", async () => {
+    const root = tempRoot();
+    const capture = join(root, "requests.jsonl");
+    const server = join(root, "fake-app-server.cjs");
+    writeFileSync(server, fakeJsonRpcServer());
+
+    const backend = new CodexV2Backend({
+      command: "node",
+      args: [server],
+      cwd: root,
+    });
+    process.env.ORCHESTRA_CAPTURE = capture;
+
+    await backend.connect();
+    await backend.startThread({ cwd: root, model: "gpt-5.5", serviceTier: "priority" });
+    await backend.resumeThread("thread-1", { cwd: root, model: "gpt-5.5", serviceTier: "priority" });
+    await backend.startTurn("thread-1", "do the thing", { model: "gpt-5.5", serviceTier: "priority" });
+    await backend.close();
+
+    const messages = readFileSync(capture, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { method: string; params: { serviceTier?: string } });
+    expect(messages.find((message) => message.method === "thread/start")?.params.serviceTier).toBe("priority");
+    expect(messages.find((message) => message.method === "thread/resume")?.params.serviceTier).toBe("priority");
+    expect(messages.find((message) => message.method === "turn/start")?.params.serviceTier).toBe("priority");
+  });
 });
 
 function tempRoot(): string {
