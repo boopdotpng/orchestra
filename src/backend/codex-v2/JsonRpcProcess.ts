@@ -31,8 +31,11 @@ export type JsonRpcProcessOptions = {
   cwd?: string | undefined;
 };
 
+const STDERR_TAIL_LIMIT = 4096;
+
 export class JsonRpcProcess {
   private child: ChildProcessWithoutNullStreams | undefined;
+  private stderrTail = "";
   private nextId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
   private readonly notifications = new EventBus<BackendNotification>();
@@ -53,28 +56,41 @@ export class JsonRpcProcess {
       return;
     }
 
-    this.child = spawn(this.options.command, this.options.args, {
+    this.stderrTail = "";
+    const child = spawn(this.options.command, this.options.args, {
       cwd: this.options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    this.child = child;
 
-    this.child.once("exit", (code, signal) => {
-      const message = `Codex app-server exited (${signal ?? code ?? "unknown"})`;
+    // "close" (not "exit") so stderr has flushed before we build the message;
+    // otherwise the reason the child died is silently dropped.
+    child.once("close", (code, signal) => {
+      const detail = this.stderrTail.trim();
+      const message = `Codex app-server exited (${signal ?? code ?? "unknown"})${detail ? `: ${detail}` : ""}`;
       for (const pending of this.pending.values()) {
         pending.reject(new Error(message));
       }
       this.pending.clear();
-      this.child = undefined;
-    });
-
-    this.child.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8").trim();
-      if (text.length > 0) {
-        this.notifications.emit({ method: "transport/stderr", params: { text } });
+      if (this.child === child) {
+        this.child = undefined;
       }
     });
 
-    const lines = createInterface({ input: this.child.stdout });
+    // Writes that race the child's exit must not crash the process with an
+    // unhandled EPIPE; the close handler reports the real failure.
+    child.stdin.on("error", () => {});
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      this.stderrTail = (this.stderrTail + text).slice(-STDERR_TAIL_LIMIT);
+      const trimmed = text.trim();
+      if (trimmed.length > 0) {
+        this.notifications.emit({ method: "transport/stderr", params: { text: trimmed } });
+      }
+    });
+
+    const lines = createInterface({ input: child.stdout });
     lines.on("line", (line) => {
       this.handleLine(line);
     });

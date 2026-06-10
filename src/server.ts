@@ -24,6 +24,12 @@ const workspace = new WorkspaceManager(store, manager, {
 
 await manager.connect();
 
+// Codex pushes account/rateLimits/updated during turns; poll as a fallback so
+// window resets surface while the fleet is idle. Emits SSE only on change.
+const rateLimitTimer = setInterval(() => {
+  manager.refreshRateLimits().catch(() => {});
+}, 60_000);
+
 const server = Bun.serve({
   hostname: host,
   port,
@@ -36,6 +42,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 async function shutdown() {
+  clearInterval(rateLimitTimer);
   server.stop();
   await manager.close();
   store.close();

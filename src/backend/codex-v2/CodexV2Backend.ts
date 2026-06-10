@@ -164,6 +164,10 @@ export class CodexV2Backend implements CodexBackend {
     return this.rpc.request("model/list", {});
   }
 
+  readRateLimits(): Promise<Json> {
+    return this.rpc.request("account/rateLimits/read", {});
+  }
+
   async respond(requestId: string | number, result: Json): Promise<void> {
     this.rpc.respond(requestId, result);
   }

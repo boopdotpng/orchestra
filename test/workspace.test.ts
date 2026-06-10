@@ -158,6 +158,9 @@ class FakeBackend implements CodexBackend {
   async listModels() {
     return {};
   }
+  async readRateLimits() {
+    return {};
+  }
   async respond(_requestId: string | number, _result: Json) {}
 }
 

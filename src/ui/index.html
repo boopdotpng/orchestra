@@ -97,8 +97,11 @@
   .repo-label {
     display: flex; align-items: baseline; gap: 7px; padding: 4px 10px 6px;
     font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--text-dim);
-    white-space: nowrap; overflow: hidden;
+    white-space: nowrap; overflow: hidden; cursor: pointer; border-radius: 7px;
+    border: 1px solid transparent;
   }
+  .repo-label:hover .dirname { color: var(--accent); }
+  .repo-label.sel { background: #14202f; border-color: #1d3a5f; }
   .repo-label .dirname { color: var(--text); }
   .repo-label .count { color: var(--text-faint); font-weight: 400; }
 
@@ -132,7 +135,15 @@
   .side-empty { padding: 30px 18px; color: var(--text-faint); font-size: 12.5px; text-align: center; line-height: 1.7; }
   .side-empty code { font-family: var(--mono); background: var(--bg-elev); padding: 2px 6px; border-radius: 5px; color: var(--accent); font-size: 11px; }
 
-  .side-foot { border-top: 1px solid var(--border-soft); padding: 10px 14px; display: flex; align-items: center; gap: 8px; }
+  .side-foot { border-top: 1px solid var(--border-soft); padding: 10px 14px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .rate-chip { display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .rl-row { display: flex; align-items: center; gap: 7px; }
+  .rl-row .lbl { width: 38px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  .rl-row .bar { flex: 1; height: 4px; border-radius: 3px; background: var(--bg-elev); border: 1px solid var(--border-soft); overflow: hidden; }
+  .rl-row .bar i { display: block; height: 100%; background: var(--green); }
+  .rl-row.warn .bar i { background: var(--yellow); }
+  .rl-row.crit .bar i { background: var(--red); }
+  .rl-row .pct { width: 36px; text-align: right; color: var(--text); font-weight: 600; }
   .cfg-chip {
     flex: 1; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim);
     background: var(--bg-elev); border: 1px solid var(--border-soft);
@@ -159,6 +170,39 @@
   .ov-tile.waiting .n { color: var(--yellow); }
   .ov-tile.error .n { color: var(--red); }
   .ov-tile.idle .n { color: var(--green); }
+  .ov-repos { display: flex; gap: 9px; flex-wrap: wrap; justify-content: center; max-width: 620px; }
+  .ov-repo { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; padding: 7px 14px; border-radius: 20px; }
+  .ov-repo .count { color: var(--text-faint); font-size: 11px; }
+  .ov-repo:hover { border-color: var(--accent-dim); color: var(--accent); }
+
+  /* workdir grid */
+  .rgrid-wrap { flex: 1; overflow-y: auto; min-height: 0; padding: 16px 20px 24px; }
+  .rgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-content: start; }
+  .rcard {
+    display: flex; flex-direction: column; height: 240px;
+    background: var(--bg-side); border: 1px solid var(--border-soft); border-radius: 11px;
+    overflow: hidden; cursor: pointer; transition: border-color .12s;
+  }
+  .rcard:hover { border-color: var(--accent-dim); }
+  .rcard.waiting_approval { border-color: #5a4410; }
+  .rcard.error { border-color: #5a2122; }
+  .rc-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0; }
+  .rc-head .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--text-faint); }
+  .rc-head .rid { font-family: var(--mono); font-weight: 700; font-size: 13.5px; }
+  .rc-head .rtime { margin-left: auto; font-size: 10.5px; color: var(--text-faint); flex-shrink: 0; }
+  .rc-out {
+    flex: 1; overflow-y: auto; min-height: 0; padding: 9px 12px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.55; color: var(--text-dim);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .rc-out .none { color: var(--text-faint); font-style: italic; }
+  .rc-foot {
+    flex-shrink: 0; display: flex; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--border-soft);
+    font-size: 10.5px; color: var(--text-faint); font-family: var(--mono);
+    white-space: nowrap; overflow: hidden;
+  }
+  .rc-foot .branch { overflow: hidden; text-overflow: ellipsis; }
+  .rc-foot span:not(.branch) { flex-shrink: 0; }
 
   /* detail header */
   .detail-head { position: relative; padding: 14px 20px 12px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
@@ -345,6 +389,10 @@
     .filters.open { display: flex; }
     .filter-chip { white-space: nowrap; text-align: center; padding: 8px 11px; }
 
+    .rgrid-wrap { padding: 10px; }
+    .rgrid { grid-template-columns: 1fr; gap: 10px; }
+    .rcard { height: 200px; }
+
     .convo { padding: 12px 10px 20px; gap: 10px; }
     .msg .bubble { padding: 9px 12px; }
     .msg.user { max-width: 90%; }
@@ -374,6 +422,7 @@
       <div class="fleet" id="fleet"></div>
       <div class="side-list" id="sideList"></div>
       <div class="side-foot">
+        <div class="rate-chip" id="rateChip" hidden></div>
         <div class="cfg-chip" id="cfgChip" title="Settings">…</div>
       </div>
     </aside>
@@ -415,6 +464,7 @@ const POLL_MS = 10000;
 const state = {
   agents: [],          // ManagedAgentSummary[] from /status
   selected: null,      // agent id shown in main pane (null = overview)
+  repoView: null,      // workdir path shown as a grid in main pane (null = none)
   tab: "convo",        // "convo" | "diff"
   convo: {},           // id -> message[]
   diffs: {},           // id -> diff text
@@ -423,6 +473,7 @@ const state = {
   outBuf: {},          // id -> { itemId: text } live accumulation
   config: null,
   models: [],
+  rateLimits: null,    // latest codex account RateLimitSnapshot
   detailLoadSeq: 0,
   detailLoading: null,
   detailPending: {},
@@ -518,6 +569,42 @@ function renderFleet() {
   $("fleet").innerHTML = chips.join("");
 }
 
+// ---------- codex rate limits (sidebar footer) ----------
+function rlWindowLabel(w) {
+  const m = w && w.windowDurationMins;
+  if (!m) return "limit";
+  if (m % 10080 === 0) return m === 10080 ? "week" : (m / 10080) + "w";
+  if (m % 1440 === 0) return (m / 1440) + "d";
+  if (m % 60 === 0) return (m / 60) + "h";
+  return m + "m";
+}
+function rlResetText(w) {
+  if (!w || !w.resetsAt) return "";
+  const ms = w.resetsAt > 1e12 ? w.resetsAt : w.resetsAt * 1000; // s or ms epoch
+  const s = Math.max(0, (ms - Date.now()) / 1000);
+  if (s < 3600) return Math.max(1, Math.ceil(s / 60)) + "m";
+  if (s < 86400) return Math.round(s / 3600) + "h";
+  return Math.round(s / 86400) + "d";
+}
+function renderRateLimits() {
+  const el = $("rateChip");
+  const rl = state.rateLimits;
+  const windows = [rl && rl.primary, rl && rl.secondary].filter(Boolean);
+  if (!windows.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = windows.map((w) => {
+    const left = Math.max(0, Math.min(100, 100 - Math.round(w.usedPercent ?? 0)));
+    const cls = left <= 10 ? "crit" : left <= 30 ? "warn" : "";
+    const reset = rlResetText(w);
+    const tip = `codex ${rlWindowLabel(w)} limit · ${left}% left${reset ? ` · resets in ${reset}` : ""}${rl.planType ? ` · ${rl.planType}` : ""}`;
+    return `<div class="rl-row ${cls}" title="${esc(tip)}">
+      <span class="lbl">${esc(rlWindowLabel(w))}</span>
+      <span class="bar"><i style="width:${left}%"></i></span>
+      <span class="pct">${left}%</span>
+    </div>`;
+  }).join("");
+}
+
 function renderSidebar() {
   renderFleet();
   const list = $("sideList");
@@ -535,12 +622,13 @@ function renderSidebar() {
   for (const [repo, agents] of [...byRepo.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
     agents.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0));
     html += `<div class="repo">
-      <div class="repo-label" title="${esc(repo)}"><span class="dirname">${esc(dirName(repo))}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
+      <div class="repo-label ${repo === state.repoView ? "sel" : ""}" data-repo="${esc(repo)}" title="${esc(repo)} — open grid view"><span class="dirname">${esc(dirName(repo))}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
       ${agents.map(rowHtml).join("")}
     </div>`;
   }
   list.innerHTML = html;
   list.querySelectorAll(".arow").forEach((r) => r.addEventListener("click", () => openAgent(r.dataset.id)));
+  list.querySelectorAll(".repo-label").forEach((r) => r.addEventListener("click", () => openRepo(r.dataset.repo)));
 }
 
 function rowHtml(a) {
@@ -573,33 +661,53 @@ function patchRow(id) {
 
 // ---------- navigation / routing ----------
 function routeFor(id) { return "#/a/" + encodeURIComponent(id); }
+function repoRoute(path) { return "#/w/" + encodeURIComponent(path); }
 function decodeRoute(hash) {
-  const m = /^#\/a\/(.+)$/.exec(hash || "");
-  return m ? { id: decodeURIComponent(m[1]) } : { id: null };
+  let m = /^#\/a\/(.+)$/.exec(hash || "");
+  if (m) return { id: decodeURIComponent(m[1]), repo: null };
+  m = /^#\/w\/(.+)$/.exec(hash || "");
+  if (m) return { id: null, repo: decodeURIComponent(m[1]) };
+  return { id: null, repo: null };
+}
+function markSidebarSel() {
+  document.querySelectorAll(".arow").forEach((r) => r.classList.toggle("sel", r.dataset.id === state.selected));
+  document.querySelectorAll(".repo-label").forEach((r) => r.classList.toggle("sel", r.dataset.repo === state.repoView));
 }
 function openAgent(id) {
   if (decodeRoute(location.hash).id !== id) history.pushState({ id }, "", routeFor(id));
   showAgent(id);
 }
+function openRepo(path) {
+  if (decodeRoute(location.hash).repo !== path) history.pushState({ repo: path }, "", repoRoute(path));
+  showRepo(path);
+}
 function showAgent(id) {
   const prev = state.selected;
-  state.selected = id; state.tab = "convo";
+  state.selected = id; state.repoView = null; state.tab = "convo";
   document.body.classList.add("show-detail");
-  document.querySelectorAll(".arow").forEach((r) => r.classList.toggle("sel", r.dataset.id === id));
+  markSidebarSel();
   renderDetail();
   if (prev !== id) { loadAgentDetail(id); loadDiff(id); }
 }
+function showRepo(path) {
+  state.selected = null; state.repoView = path;
+  document.body.classList.add("show-detail");
+  markSidebarSel();
+  renderRepoView(true);
+}
 function showOverview() {
-  state.selected = null;
+  state.selected = null; state.repoView = null;
   document.body.classList.remove("show-detail");
-  document.querySelectorAll(".arow.sel").forEach((r) => r.classList.remove("sel"));
+  markSidebarSel();
   renderOverview();
 }
 function backToList() { history.back(); }
 function resetToOverview() { if (location.hash && location.hash !== "#/") history.replaceState({}, "", "#/"); showOverview(); }
+function repoAgents(path) { return state.agents.filter((a) => (a.repoPath || "(unknown)") === path); }
 function applyRoute() {
   const r = decodeRoute(location.hash);
   if (r.id && agentById(r.id)) showAgent(r.id);
+  else if (r.repo && repoAgents(r.repo).length) showRepo(r.repo);
   else showOverview();
 }
 window.addEventListener("popstate", applyRoute);
@@ -608,24 +716,109 @@ window.addEventListener("popstate", applyRoute);
 function renderOverview() {
   const counts = { running: 0, waiting_approval: 0, error: 0, idle: 0 };
   for (const a of state.agents) if (a.status in counts) counts[a.status]++;
-  const repos = new Set(state.agents.map((a) => a.repoPath).filter(Boolean));
+  const repos = [...new Set(state.agents.map((a) => a.repoPath || "(unknown)"))].sort();
   $("main").innerHTML = `
     <div class="welcome">
       <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v3M10 13l-3.5 3M14 13l3.5 3"/></svg>
       ${state.agents.length ? `
-        <h2>${state.agents.length} agent${state.agents.length === 1 ? "" : "s"} across ${repos.size} repo${repos.size === 1 ? "" : "s"}</h2>
+        <h2>${state.agents.length} agent${state.agents.length === 1 ? "" : "s"} across ${repos.length} repo${repos.length === 1 ? "" : "s"}</h2>
         <div class="ov-tiles">
           <div class="ov-tile running"><div class="n">${counts.running}</div><div class="t">running</div></div>
           <div class="ov-tile waiting"><div class="n">${counts.waiting_approval}</div><div class="t">need approval</div></div>
           <div class="ov-tile idle"><div class="n">${counts.idle}</div><div class="t">idle</div></div>
           <div class="ov-tile error"><div class="n">${counts.error}</div><div class="t">errors</div></div>
         </div>
-        <div class="sub">Pick an agent from the sidebar to watch its conversation, review its diff, and steer it.</div>
+        <div class="ov-repos">${repos.map((p) => `<button class="ov-repo" data-repo="${esc(p)}" title="${esc(p)}">${esc(dirName(p))}<span class="count">${repoAgents(p).length}</span></button>`).join("")}</div>
+        <div class="sub">Open a workdir to watch all its agents in a live grid, or pick one agent from the sidebar to steer it.</div>
       ` : `
         <h2>No agents yet</h2>
         <div class="sub">Create agents from the CLI or MCP and they'll appear here, live.<br/><br/><code>orchestra create &lt;dir&gt; -n 4 --prompt "…"</code></div>
       `}
     </div>`;
+  document.querySelectorAll("#main .ov-repo").forEach((b) => b.addEventListener("click", () => openRepo(b.dataset.repo)));
+}
+
+// ---------- workdir grid (all agents in one workdir, live) ----------
+function gridTextFor(a) {
+  const live = (state.liveOutput[a.id] || "").trim();
+  const text = live || (a.lastAssistantMessageTail || "").trim() || (a.lastTurnSummary || "").trim();
+  return text.slice(-1500);
+}
+function repoStatsHtml(agents) {
+  const counts = { running: 0, waiting_approval: 0, error: 0, idle: 0, notLoaded: 0 };
+  for (const a of agents) counts[a.status] = (counts[a.status] || 0) + 1;
+  const parts = [`<span><b>${agents.length}</b> agents</span>`];
+  if (counts.running) parts.push(`<span><b>${counts.running}</b> running</span>`);
+  if (counts.waiting_approval) parts.push(`<span><b>${counts.waiting_approval}</b> need approval</span>`);
+  if (counts.error) parts.push(`<span><b>${counts.error}</b> error</span>`);
+  if (counts.idle) parts.push(`<span><b>${counts.idle}</b> idle</span>`);
+  return parts.join("");
+}
+function cardHtml(a) {
+  const needs = a.pendingApprovals && a.pendingApprovals.length;
+  const text = gridTextFor(a);
+  const tok = fmtTok(a.tokensUsed);
+  return `<div class="rcard ${a.status}" data-id="${esc(a.id)}">
+    <div class="rc-head">
+      <span class="dot ${a.status}"></span>
+      <span class="rid">${esc(a.id)}</span>
+      <span class="badge ${a.status}">${esc(needs ? "needs approval" : statusLabel(a.status))}</span>
+      <span class="rtime">${esc(fmtAgo(a.lastActivityAt))}</span>
+    </div>
+    <div class="rc-out">${text ? esc(text) : '<span class="none">no output yet</span>'}</div>
+    <div class="rc-foot"><span class="branch">${esc(a.branch || "")}</span><span>${a.turnCount ?? 0} turns</span>${tok ? `<span>${esc(tok)} tok</span>` : ""}</div>
+  </div>`;
+}
+function renderRepoView(force = false) {
+  const path = state.repoView;
+  const agents = repoAgents(path).sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0));
+  if (!agents.length) { resetToOverview(); return; }
+  const grid = $("rgrid");
+  const ids = agents.map((a) => a.id).join();
+  const existing = grid ? [...grid.querySelectorAll(".rcard")].map((c) => c.dataset.id).join() : null;
+  if (!force && grid && existing === ids) {
+    // same cards: patch in place to keep scroll positions
+    for (const a of agents) patchRepoCard(a.id);
+    const stats = $("rstats"); if (stats) stats.innerHTML = repoStatsHtml(agents);
+    return;
+  }
+  $("main").innerHTML = `
+    <div class="detail-head">
+      <button class="backbtn" id="r_back" title="Back to agents">←</button>
+      <div class="meta">
+        <div class="title"><span class="id">${esc(dirName(path))}</span></div>
+        <div class="sub">${esc(path)}</div>
+        <div class="stats" id="rstats">${repoStatsHtml(agents)}</div>
+      </div>
+    </div>
+    <div class="rgrid-wrap"><div class="rgrid" id="rgrid">${agents.map(cardHtml).join("")}</div></div>`;
+  $("r_back").addEventListener("click", backToList);
+  document.querySelectorAll("#rgrid .rcard").forEach((c) => c.addEventListener("click", () => openAgent(c.dataset.id)));
+  document.querySelectorAll("#rgrid .rc-out").forEach((o) => { o.scrollTop = o.scrollHeight; });
+}
+function patchRepoCard(id) {
+  if (!state.repoView) return;
+  const card = document.querySelector(`.rcard[data-id="${CSS.escape(id)}"]`);
+  const a = agentById(id);
+  if (!card || !a) return;
+  card.className = "rcard " + a.status;
+  const dot = card.querySelector(".dot"); if (dot) dot.className = "dot " + a.status;
+  const badge = card.querySelector(".badge");
+  if (badge) {
+    const needs = a.pendingApprovals && a.pendingApprovals.length;
+    badge.className = "badge " + a.status;
+    badge.textContent = needs ? "needs approval" : statusLabel(a.status);
+  }
+  const tm = card.querySelector(".rtime"); if (tm) tm.textContent = fmtAgo(a.lastActivityAt);
+  const out = card.querySelector(".rc-out");
+  if (out) {
+    const text = gridTextFor(a);
+    if (text) {
+      const pinned = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+      out.textContent = text;
+      if (pinned) out.scrollTop = out.scrollHeight;
+    }
+  }
 }
 
 // ---------- detail ----------
@@ -1100,9 +1293,12 @@ async function loadStatus() {
   try {
     const s = await api("/status"); // rich summaries: previews, tokens, approvals
     state.agents = s.agents || [];
+    if (s.rateLimits) state.rateLimits = s.rateLimits;
+    renderRateLimits();
     renderSidebar();
     if (state.selected && !agentById(state.selected)) { resetToOverview(); return; }
     if (state.selected) updateDetailChrome();
+    else if (state.repoView) renderRepoView();
     else renderOverview();
   } catch (e) { setConn("down", "API error"); }
 }
@@ -1165,10 +1361,12 @@ function eventAgentId(ev) {
   return a ? a.id : null;
 }
 function handleLiveEvent(ev) {
+  if (ev.type === "account.rateLimits") { state.rateLimits = ev.rateLimits || state.rateLimits; renderRateLimits(); return; }
   if (ev.type === "agent.started" || ev.type === "agent.status" || ev.type === "approval.requested" || ev.type === "approval.resolved") loadStatus();
   const id = eventAgentId(ev); if (!id) return;
   noteLiveOutput(id, ev);
   patchRow(id);
+  patchRepoCard(id);
   if (state.selected === id) {
     if (state.detailLoading === id) {
       (state.detailPending[id] = state.detailPending[id] || []).push(ev);
@@ -1187,6 +1385,7 @@ await loadStatus();
   const r = decodeRoute(location.hash);
   history.replaceState({}, "", "#/");
   if (r.id) history.pushState({ id: r.id }, "", routeFor(r.id));
+  else if (r.repo) history.pushState({ repo: r.repo }, "", repoRoute(r.repo));
   applyRoute();
 })();
 connectStream();

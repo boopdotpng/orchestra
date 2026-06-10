@@ -137,7 +137,7 @@ export class OrchestraClient {
   private async text(path: string): Promise<string> {
     const response = await fetch(new URL(path, this.baseUrl), { method: "GET" });
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw new Error(await errorMessage(response));
     }
     return response.text();
   }
@@ -151,8 +151,21 @@ export class OrchestraClient {
       },
     });
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw new Error(await errorMessage(response));
     }
     return response.json() as Promise<T>;
   }
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text) as unknown;
+    if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+      return data.error;
+    }
+  } catch {
+    // fall through to raw body
+  }
+  return text || `HTTP ${response.status}`;
 }

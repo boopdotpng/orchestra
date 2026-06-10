@@ -299,6 +299,15 @@ class FakeBackend implements CodexBackend {
       ],
     };
   }
+  async readRateLimits() {
+    return {
+      rateLimits: {
+        primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: null },
+        secondary: { usedPercent: 5, windowDurationMins: 10080, resetsAt: null },
+        planType: "plus",
+      },
+    };
+  }
   async respond(_requestId: string | number, _result: Json) {}
 }
 

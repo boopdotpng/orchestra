@@ -9,7 +9,7 @@ export type OrchestraApiRoute = {
 export const ORCHESTRA_API_ROUTES = [
   { method: "GET", path: "/health", description: "Service health check." },
   { method: "GET", path: "/routes", description: "List HTTP API routes." },
-  { method: "GET", path: "/status", description: "List agents and pending approvals." },
+  { method: "GET", path: "/status", description: "List agents, pending approvals, and account rate limits." },
   { method: "GET", path: "/config", description: "Read effective config and source files." },
   { method: "PATCH", path: "/config", description: "Update global or local config." },
   { method: "GET", path: "/models", description: "List available Codex models and service tiers." },
@@ -94,6 +94,8 @@ export type AgentsResponse = {
 export type StatusResponse = AgentsResponse & {
   agents: ManagedAgentSummary[];
   approvals: unknown[];
+  /** Latest codex account RateLimitSnapshot, or null if not yet observed. */
+  rateLimits: Json | null;
 };
 
 export type ModelsResponse = Json;

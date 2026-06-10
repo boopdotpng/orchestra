@@ -56,6 +56,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return jsonResponse({
       agents: deps.store.listManagedAgentSummaries(),
       approvals: deps.store.listPendingApprovals(),
+      rateLimits: deps.manager.rateLimits ?? null,
     });
   }
 

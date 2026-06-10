@@ -133,6 +133,7 @@ export type AgentEvent =
   | { type: "stream.command"; threadId: string; turnId: string; itemId: string; delta: string }
   | { type: "approval.requested"; approval: Approval }
   | { type: "approval.resolved"; requestId?: string | number | undefined; raw: Json }
+  | { type: "account.rateLimits"; rateLimits: Json }
   | { type: "error"; raw: Json }
   | { type: "warning"; raw: Json }
   | { type: "notification"; method: string; params?: Json };

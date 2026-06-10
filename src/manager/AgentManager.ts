@@ -23,6 +23,7 @@ export type AgentManagerOptions = {
 export class AgentManager {
   private readonly events = new EventBus<AgentEvent>();
   private initialized = false;
+  private rateLimitsSnapshot: Record<string, Json | undefined> | undefined;
 
   constructor(
     private readonly backend: CodexBackend,
@@ -48,7 +49,25 @@ export class AgentManager {
     if (!this.initialized) {
       await this.backend.initialize();
       this.initialized = true;
+      // Seed the rate limit snapshot; rolling account/rateLimits/updated
+      // notifications keep it fresh afterwards. Best effort: older codex
+      // builds may not support the request.
+      void this.backend
+        .readRateLimits()
+        .then((result) => this.applyRateLimits(asRecord(result)?.rateLimits))
+        .catch(() => {});
     }
+  }
+
+  get rateLimits(): Json | undefined {
+    return this.rateLimitsSnapshot;
+  }
+
+  async refreshRateLimits(): Promise<Json | undefined> {
+    await this.connect();
+    const result = await this.backend.readRateLimits();
+    this.applyRateLimits(asRecord(result)?.rateLimits);
+    return this.rateLimitsSnapshot;
   }
 
   close(): Promise<void> {
@@ -241,6 +260,10 @@ export class AgentManager {
         }
         break;
       }
+      case "account/rateLimits/updated": {
+        this.applyRateLimits(asRecord(params)?.rateLimits);
+        break;
+      }
       case "serverRequest/resolved": {
         this.emit({ type: "approval.resolved", requestId: readString(params, "requestId"), raw: params });
         break;
@@ -269,6 +292,30 @@ export class AgentManager {
       createdAtMs: readNumber(params, "startedAtMs") ?? Date.now(),
     };
     this.emit({ type: "approval.requested", approval });
+  }
+
+  // Rolling updates are sparse: merge non-null fields into the last snapshot
+  // (a null in an update does not clear a previously observed value). Emits
+  // an event only when the merged snapshot actually changed.
+  private applyRateLimits(update: Json | undefined): void {
+    const next = asRecord(update);
+    if (!next) {
+      return;
+    }
+    const prev = this.rateLimitsSnapshot;
+    const merged: Record<string, Json | undefined> = { ...(prev ?? {}) };
+    for (const [key, value] of Object.entries(next)) {
+      if (value !== null && value !== undefined) {
+        merged[key] = value;
+      } else if (!(key in merged)) {
+        merged[key] = null;
+      }
+    }
+    if (prev && JSON.stringify(merged) === JSON.stringify(prev)) {
+      return;
+    }
+    this.rateLimitsSnapshot = merged;
+    this.emit({ type: "account.rateLimits", rateLimits: merged });
   }
 
   private emit(event: AgentEvent): void {

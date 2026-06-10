@@ -64,6 +64,9 @@ class FakeBackend implements CodexBackend {
   async listModels() {
     return {};
   }
+  async readRateLimits() {
+    return {};
+  }
   async respond(requestId: string | number, result: Json) {
     this.responses.push({ requestId, result });
   }
@@ -94,5 +97,37 @@ describe("AgentManager", () => {
     expect(events).toContain("stream.agent");
     expect(events).toContain("approval.requested");
     expect(backend.responses[0]).toEqual({ requestId: 9, result: { decision: "accept" } });
+  });
+
+  test("merges sparse rate limit updates and emits only on change", async () => {
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend);
+    const snapshots: Json[] = [];
+    manager.onEvent((event) => {
+      if (event.type === "account.rateLimits") {
+        snapshots.push(event.rateLimits);
+      }
+    });
+
+    backend.notifications.emit({
+      method: "account/rateLimits/updated",
+      params: { rateLimits: { primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: null }, planType: "plus" } },
+    });
+    // sparse update: null planType must not clear the previously observed value
+    backend.notifications.emit({
+      method: "account/rateLimits/updated",
+      params: { rateLimits: { primary: { usedPercent: 14, windowDurationMins: 300, resetsAt: null }, planType: null } },
+    });
+    // identical payload: no new event
+    backend.notifications.emit({
+      method: "account/rateLimits/updated",
+      params: { rateLimits: { primary: { usedPercent: 14, windowDurationMins: 300, resetsAt: null } } },
+    });
+
+    expect(snapshots).toHaveLength(2);
+    expect(manager.rateLimits).toEqual({
+      primary: { usedPercent: 14, windowDurationMins: 300, resetsAt: null },
+      planType: "plus",
+    });
   });
 });

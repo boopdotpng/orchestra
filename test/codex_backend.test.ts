@@ -70,6 +70,21 @@ describe("CodexV2Backend", () => {
     expect(messages.find((message) => message.method === "thread/resume")?.params.serviceTier).toBe("priority");
     expect(messages.find((message) => message.method === "turn/start")?.params.serviceTier).toBe("priority");
   });
+
+  test("surfaces child stderr when the app-server exits", async () => {
+    const root = tempRoot();
+    const server = join(root, "broken-app-server.cjs");
+    writeFileSync(server, 'process.stderr.write("Error: failed to connect to socket at control.sock\\n");process.exit(1);\n');
+
+    const backend = new CodexV2Backend({
+      command: "node",
+      args: [server],
+      cwd: root,
+    });
+
+    await backend.connect();
+    await expect(backend.initialize()).rejects.toThrow(/exited \(1\).*failed to connect to socket at control\.sock/s);
+  });
 });
 
 function tempRoot(): string {

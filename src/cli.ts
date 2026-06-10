@@ -4,9 +4,10 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { CodexV2Backend } from "./backend/codex-v2/CodexV2Backend";
+import { OrchestraClient } from "./client";
 import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
-import { readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
+import { expandHome, readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
 import { DEFAULT_MODEL, loadOrchestraConfig, normalizeServiceTier, type OrchestraConfig } from "./config";
 import type { AgentEvent, Approval, ApprovalPolicy, SandboxMode, StartAgentOptions } from "./domain/types";
 
@@ -30,6 +31,23 @@ async function main(): Promise<void> {
   if (args.command === "monitor") {
     await monitor(args);
     return;
+  }
+
+  // Mutating commands need the daemon that owns the agent threads. Spawning a
+  // fresh app-server here cannot interrupt or steer turns it does not own, so
+  // route through the running orchestra server whenever it is reachable.
+  if (DAEMON_ROUTED_COMMANDS.has(args.command) && !args.flags.local) {
+    const baseUrl = orchestraUrl(args);
+    const client = await connectDaemon(baseUrl);
+    if (client) {
+      await runViaDaemon(client, args);
+      return;
+    }
+    if (args.command === "interrupt" || args.command === "steer") {
+      console.error(
+        `warning: no orchestra server reachable at ${baseUrl}; falling back to a local app-server, which cannot control turns owned by a running orchestra server`,
+      );
+    }
   }
 
   const config = loadOrchestraConfig({
@@ -122,6 +140,90 @@ async function main(): Promise<void> {
     await manager.close();
     store.close();
   }
+}
+
+const DAEMON_ROUTED_COMMANDS = new Set(["create", "steer", "interrupt", "teardown", "remove"]);
+
+async function connectDaemon(baseUrl: string): Promise<OrchestraClient | undefined> {
+  try {
+    const response = await fetch(new URL("/health", baseUrl), { signal: AbortSignal.timeout(1500) });
+    return response.ok ? new OrchestraClient(baseUrl) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<void> {
+  switch (args.command) {
+    case "create": {
+      // Resolve paths client-side: the daemon resolves relative paths against
+      // its own cwd, not the caller's.
+      const dir = expandHome(required(args.positionals[0], "dir"));
+      const prompt = required(promptFlag(args), "prompt");
+      const { agents } = await client.createAgents({
+        dir,
+        prompt,
+        count: flagNumber(args.flags.n) ?? 1,
+        ...turnOverrides(args),
+      });
+      for (const agent of agents) {
+        console.log(`${agent.id}\t${agent.status}\t${agent.cwd}\t${agent.threadId}`);
+      }
+      return;
+    }
+    case "steer": {
+      const id = required(args.positionals[0], "agent id");
+      const input = args.positionals.slice(1).join(" ");
+      if (!input) {
+        throw new Error("steer requires guidance text");
+      }
+      console.log(JSON.stringify(await client.steer(id, { input, ...turnOverrides(args) }), null, 2));
+      return;
+    }
+    case "interrupt": {
+      const id = required(args.positionals[0], "agent id");
+      console.log(JSON.stringify(await client.interrupt(id), null, 2));
+      return;
+    }
+    case "teardown": {
+      const target = required(args.positionals[0], "target");
+      const resolved = target === "all" || /^[0-9a-f]{4}$/i.test(target) ? target : expandHome(target);
+      const { agents } = await client.teardownTarget({ target: resolved });
+      for (const agent of agents) {
+        console.log(`removed ${agent.id}\t${agent.cwd}`);
+      }
+      return;
+    }
+    case "remove": {
+      const id = required(args.positionals[0], "agent id");
+      const { agent } = await client.remove(id);
+      console.log(`removed ${agent.id}\t${agent.cwd}`);
+      return;
+    }
+    default:
+      throw new Error(`command ${args.command} cannot be routed to the orchestra server`);
+  }
+}
+
+/**
+ * Only explicit flags are forwarded; omitted options use the daemon's own
+ * config defaults rather than this process's.
+ */
+function turnOverrides(args: ParsedArgs): {
+  model?: string;
+  serviceTier?: OrchestraConfig["serviceTier"];
+  approvalPolicy?: ApprovalPolicy;
+  sandbox?: SandboxMode;
+} {
+  const serviceTier = normalizeServiceTier(args.flags["service-tier"]);
+  const approval = approvalPolicy(args.flags.approval);
+  const sandbox = sandboxMode(args.flags.sandbox);
+  return {
+    ...(typeof args.flags.model === "string" ? { model: args.flags.model } : {}),
+    ...(serviceTier ? { serviceTier } : {}),
+    ...(approval ? { approvalPolicy: approval } : {}),
+    ...(sandbox ? { sandbox } : {}),
+  };
 }
 
 function register(workspace: WorkspaceManager, args: ParsedArgs): void {
@@ -927,8 +1029,14 @@ Options:
   --model MODEL             default: ${DEFAULT_MODEL}
   --service-tier TIER       default | priority
   --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml
-  --transport proxy|stdio   default: proxy
+  --transport proxy|stdio   default: proxy (only used when no orchestra server is reachable)
   --db PATH                 default: ~/.orchestra/orchestra.db
+  --url URL                 orchestra server, default: $ORCHESTRA_URL or http://127.0.0.1:5751
+  --local                   skip the orchestra server and use a direct codex app-server transport
+
+create, steer, interrupt, teardown, and remove are sent to the running
+orchestra server when one is reachable, since it owns the agent threads.
+Pass --local to force the direct transport.
 `);
 }
 

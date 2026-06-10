@@ -43,5 +43,6 @@ export interface CodexBackend {
   steerTurn(threadId: string, expectedTurnId: string, input: string): Promise<Json>;
   interruptTurn(threadId: string, turnId: string): Promise<Json>;
   listModels(): Promise<Json>;
+  readRateLimits(): Promise<Json>;
   respond(requestId: string | number, result: Json): Promise<void>;
 }
