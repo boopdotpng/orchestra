@@ -79,6 +79,32 @@ describe("WorkspaceManager", () => {
 
     store.close();
   });
+
+  test("tears down agents by repo folder name after source repo is deleted", async () => {
+    const root = tempRoot();
+    const source = join(root, "bh-tournament");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    const agent = agents[0]!;
+    rmSync(source, { recursive: true, force: true });
+
+    const removed = await workspace.teardownTarget("bh-tournament");
+
+    expect(removed.map((candidate) => candidate.id)).toEqual([agent.id]);
+    expect(store.getManagedAgent(agent.id)).toBeUndefined();
+    expect(existsSync(agent.cwd)).toBe(false);
+
+    store.close();
+  });
 });
 
 class FakeBackend implements CodexBackend {

@@ -143,11 +143,7 @@ export class WorkspaceManager {
     if (!repo) {
       return [];
     }
-    const agents = this.store.listManagedAgentsForRepo(repo.id);
-    for (const agent of agents) {
-      await this.remove(agent.id);
-    }
-    return agents;
+    return this.teardownRepo(repo);
   }
 
   async teardownTarget(target: string): Promise<ManagedAgent[]> {
@@ -161,6 +157,19 @@ export class WorkspaceManager {
     }
     if (/^[0-9a-f]{4}$/i.test(trimmed) && this.store.getManagedAgent(trimmed.toLowerCase())) {
       return [await this.remove(trimmed.toLowerCase())];
+    }
+    const storedPath = this.store.getRepoByPath(expandHome(trimmed));
+    if (storedPath) {
+      return this.teardownRepo(storedPath);
+    }
+    if (isBareRepoName(trimmed)) {
+      const matches = this.store.listRepos().filter((repo) => basename(repo.path) === trimmed);
+      if (matches.length === 1) {
+        return this.teardownRepo(matches[0]!);
+      }
+      if (matches.length > 1) {
+        throw new Error(`ambiguous repo name: ${trimmed} matches ${matches.map((repo) => repo.path).join(", ")}`);
+      }
     }
     return this.teardown(trimmed);
   }
@@ -181,6 +190,14 @@ export class WorkspaceManager {
       throw new Error(`unknown agent id: ${id}`);
     }
     return agent;
+  }
+
+  private async teardownRepo(repo: RepoRegistration): Promise<ManagedAgent[]> {
+    const agents = this.store.listManagedAgentsForRepo(repo.id);
+    for (const agent of agents) {
+      await this.remove(agent.id);
+    }
+    return agents;
   }
 
   private async createOne(repo: RepoRegistration, options: CreateAgentsOptions): Promise<ManagedAgent> {
@@ -275,6 +292,10 @@ export function expandHome(path: string): string {
 
 function gitRoot(dir: string): string {
   return git(expandHome(dir), ["rev-parse", "--show-toplevel"]);
+}
+
+function isBareRepoName(target: string): boolean {
+  return target.length > 0 && target !== "." && target !== ".." && !target.includes("/") && !target.startsWith("~");
 }
 
 function git(cwd: string, args: string[], options: { allowFailure?: boolean } = {}): string {

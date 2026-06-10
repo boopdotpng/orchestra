@@ -187,7 +187,7 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
     }
     case "teardown": {
       const target = required(args.positionals[0], "target");
-      const resolved = target === "all" || /^[0-9a-f]{4}$/i.test(target) ? target : expandHome(target);
+      const resolved = target === "all" || /^[0-9a-f]{4}$/i.test(target) || !isPathLikeTarget(target) ? target : expandHome(target);
       const { agents } = await client.teardownTarget({ target: resolved });
       for (const agent of agents) {
         console.log(`removed ${agent.id}\t${agent.cwd}`);
@@ -653,6 +653,19 @@ function promptFrom(args: ParsedArgs): string {
   return prompt;
 }
 
+function isPathLikeTarget(target: string): boolean {
+  return (
+    target === "." ||
+    target === ".." ||
+    target === "~" ||
+    target.startsWith("./") ||
+    target.startsWith("../") ||
+    target.startsWith("~/") ||
+    target.startsWith("/") ||
+    target.includes("/")
+  );
+}
+
 function printApprovals(approvals: Approval[]): void {
   for (const approval of approvals) {
     console.log(`${approval.requestId}\t${approval.kind}\t${approval.threadId ?? ""}\t${approval.turnId ?? ""}`);
@@ -1018,7 +1031,7 @@ function printHelp(): void {
 Usage:
   orchestra create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
   orchestra status
-  orchestra teardown <id|workdir|all>
+  orchestra teardown <id|repo-name|workdir|all>
   orchestra diff <id> [--out FILE]
   orchestra exec <id> "cmd"
   orchestra steer <id> "guidance"

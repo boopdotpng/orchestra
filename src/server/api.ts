@@ -16,7 +16,7 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "GET", path: "/events", description: "Server-sent event stream for live agent events." },
   { method: "POST", path: "/repos/register", description: "Register a source repository." },
   { method: "POST", path: "/repos/teardown", description: "Remove managed agents and workspaces for a source repository." },
-  { method: "POST", path: "/teardown", description: "Remove one agent, all agents, or all agents for a workdir." },
+  { method: "POST", path: "/teardown", description: "Remove one agent, all agents, or all agents for a repo name or workdir." },
   { method: "GET", path: "/agents", description: "List managed agents." },
   { method: "POST", path: "/agents", description: "Create one or more managed agents." },
   { method: "GET", path: "/agents/:id", description: "Read one managed agent." },

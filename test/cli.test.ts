@@ -65,6 +65,18 @@ describe("orchestra CLI daemon routing", () => {
     expect(teardown?.body).toEqual({ target: "ab12" });
   });
 
+  test("routes teardown of a bare repo name without resolving it as a path", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/bh-tournament/ab12" }] },
+    });
+
+    const proc = await runCli(["teardown", "bh-tournament", "--url", baseUrl]);
+    expect(proc.exitCode).toBe(0);
+    const teardown = requests.find((request) => request.path === "/teardown");
+    expect(teardown?.body).toEqual({ target: "bh-tournament" });
+  });
+
   test("prints the server error message on failure", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {});
