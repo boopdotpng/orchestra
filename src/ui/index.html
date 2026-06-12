@@ -3,9 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
 <title>Orchestra</title>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0a0d12;
     --bg-side: #0d1117;
     --bg-elev: #131922;
@@ -354,6 +356,107 @@
   ::-webkit-scrollbar-thumb { background: #2a313c; border-radius: 6px; border: 2px solid var(--bg); }
   ::-webkit-scrollbar-thumb:hover { background: #3a434f; }
 
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg: #fbf8f2;
+      --bg-side: #f3eee5;
+      --bg-elev: #fffdf8;
+      --bg-elev2: #f8f0e5;
+      --border: #d6cab9;
+      --border-soft: #e4d8c7;
+      --text: #28231d;
+      --text-dim: #665d51;
+      --text-faint: #85796b;
+      --accent: #a45f1a;
+      --accent-dim: #e8c690;
+      --green: #247b3d;
+      --yellow: #9b6500;
+      --red: #b6463e;
+      --purple: #7651b7;
+      --blue: #266fa7;
+    }
+
+    body { background: var(--bg); }
+    button { background: var(--bg-elev); }
+    button:hover { background: #f0e4d3; border-color: #c4b399; }
+    button.primary { background: #a45f1a; border-color: #8c4f12; color: #fff8ed; }
+    button.primary:hover { background: #8c4f12; }
+    button.approve { background: #e7f4e9; border-color: #91c99e; color: #1f6935; }
+    button.approve:hover { background: #d9eddd; border-color: var(--green); }
+    button.deny { background: #fae8e4; border-color: #e1a29b; color: #9f342d; }
+    button.deny:hover { background: #f4d8d2; border-color: var(--red); }
+    input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(164,95,26,.15); }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23756c61' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    }
+
+    .fl-chip.warn { border-color: #dfbf77; background: #fff4d8; color: #7a5200; }
+    .fl-chip.warn b { color: #6f4b00; }
+    .repo-label.sel, .arow.sel { background: #f4e3ca; border-color: #dfbf91; }
+    .dot.running { box-shadow: 0 0 8px rgba(38,111,167,.35); }
+    .dot.waiting_approval { box-shadow: 0 0 8px rgba(155,101,0,.32); }
+    .side-empty code, .welcome code { background: #fff7e9; }
+
+    .rcard { background: var(--bg-elev); }
+    .rcard.waiting_approval { border-color: #dfbf77; }
+    .rcard.error { border-color: #dfaaa4; }
+    .badge.idle { color: #1f6935; background: #e7f4e9; border-color: #badfc2; }
+    .badge.running { color: #24628f; background: #e4f0fa; border-color: #bdd4e8; }
+    .badge.waiting_approval { color: #795100; background: #fff2ce; border-color: #dfbf77; }
+    .badge.error { color: #9f342d; background: #fae8e4; border-color: #dfaaa4; }
+    .badge.notLoaded { color: var(--text-faint); background: #eee6da; border-color: var(--border-soft); }
+
+    .approvals {
+      border-bottom-color: #dfbf77;
+      background: linear-gradient(180deg, #fff2ce, #f8e5b6);
+    }
+    .ap-kind { color: #795100; background: #fff9e9; border-color: #dfbf77; }
+    .ap-body { color: #5e4a20; }
+
+    .filter-chip:hover { border-color: #c4b399; color: var(--text-dim); }
+    .filter-chip.on { color: var(--text); border-color: #d7a96a; background: #f7e7cf; }
+    .msg.agent .bubble { background: var(--bg-elev); }
+    .msg.user .bubble { background: #f1d4ac; border-color: #d5a46b; color: #2b2116; }
+    .msg.error .bubble { background: #fae8e4; border-color: #dfaaa4; color: #8d302a; }
+    .msg .collap > summary .role.rs { color: #6543a4; background: #efe8fb; }
+    .msg .collap > summary .role.cmd { color: #765100; background: #fff2ce; }
+    .msg .collap > summary .cmd-line { color: #554a3e; }
+    .reason-body { background: #f4effb; border-color: #d8c8ef; color: #5f438f; }
+    .cmd-body {
+      background: #fff9ef;
+      border-color: #e0d2bd;
+      color: #40382f;
+    }
+    .ev-row { background: rgba(120,85,35,.06); }
+    .bubble.md code.md-ic,
+    .bubble.md pre.md-pre {
+      background: #fff9ef;
+      border-color: #e0d2bd;
+    }
+    .diff .add { background: rgba(36,123,61,.10); }
+    .diff .del { background: rgba(182,70,62,.10); }
+    .jump {
+      background: #a45f1a;
+      border-color: #8c4f12;
+      color: #fff8ed;
+      box-shadow: 0 8px 22px rgba(95,63,28,.22);
+    }
+    .jump:hover { background: #8c4f12; }
+
+    .scrim { background: rgba(50,36,22,.32); }
+    .modal { box-shadow: 0 24px 60px rgba(74,49,24,.22); }
+    .toast { box-shadow: 0 8px 24px rgba(74,49,24,.16); }
+    .toast.err { color: #8d302a; }
+    ::-webkit-scrollbar-thumb { background: #d5c7b4; }
+    ::-webkit-scrollbar-thumb:hover { background: #bda98e; }
+
+    .detail-head .actions,
+    .filters {
+      box-shadow: 0 16px 40px rgba(74,49,24,.18);
+    }
+  }
+
   /* ---------- mobile: sidebar = list screen, detail slides over ---------- */
   @media (max-width: 760px) {
     .app { display: block; height: 100%; }
@@ -416,6 +519,12 @@
     .toast-wrap { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
     .toast { max-width: none; }
     .modal { max-width: calc(100vw - 24px); }
+  }
+  @media (max-width: 760px) and (prefers-color-scheme: light) {
+    .detail-head .actions,
+    .filters {
+      box-shadow: 0 16px 40px rgba(74,49,24,.18);
+    }
   }
 </style>
 </head>
