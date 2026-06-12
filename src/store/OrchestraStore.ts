@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -109,6 +109,7 @@ export class OrchestraStore {
       CREATE TABLE IF NOT EXISTS managed_agents (
         id TEXT PRIMARY KEY,
         repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        workspace_name TEXT,
         source_path TEXT,
         parent_agent_id TEXT,
         base_commit TEXT,
@@ -122,6 +123,7 @@ export class OrchestraStore {
       );
     `);
     this.addColumnIfMissing("managed_agents", "on_complete", "TEXT");
+    this.addColumnIfMissing("managed_agents", "workspace_name", "TEXT");
     this.addColumnIfMissing("managed_agents", "source_path", "TEXT");
     this.addColumnIfMissing("managed_agents", "parent_agent_id", "TEXT");
     this.addColumnIfMissing("managed_agents", "base_commit", "TEXT");
@@ -266,12 +268,13 @@ export class OrchestraStore {
     this.db
       .query(
         `INSERT INTO managed_agents (
-          id, repo_id, source_path, parent_agent_id, base_commit, cwd, branch,
+          id, repo_id, workspace_name, source_path, parent_agent_id, base_commit, cwd, branch,
           thread_id, active_turn_id, status, on_complete, created_at
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           repo_id = excluded.repo_id,
+          workspace_name = excluded.workspace_name,
           source_path = excluded.source_path,
           parent_agent_id = excluded.parent_agent_id,
           base_commit = excluded.base_commit,
@@ -285,6 +288,7 @@ export class OrchestraStore {
       .run(
         agent.id,
         agent.repoId,
+        agent.workspaceName,
         agent.sourcePath ?? null,
         agent.parentAgentId ?? null,
         agent.baseCommit ?? null,
@@ -617,6 +621,7 @@ function managedAgentFromRow(row: Row): ManagedAgent {
   return {
     id: String(row.id),
     repoId: Number(row.repo_id),
+    workspaceName: optionalString(row.workspace_name) ?? legacyWorkspaceName(row),
     repoPath: optionalString(row.repo_path),
     baseCommit: optionalString(row.base_commit),
     sourcePath: optionalString(row.source_path),
@@ -629,6 +634,12 @@ function managedAgentFromRow(row: Row): ManagedAgent {
     createdAt: Number(row.created_at),
     onComplete: optionalString(row.on_complete),
   };
+}
+
+function legacyWorkspaceName(row: Row): string {
+  const repoPath = optionalString(row.repo_path);
+  const cwd = optionalString(row.cwd);
+  return basename(repoPath ?? cwd ?? "workspace");
 }
 
 function managedStatusFromRuntime(status: RuntimeStatus): ManagedAgentStatus {

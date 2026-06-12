@@ -73,7 +73,7 @@ async function main(): Promise<void> {
         await create(workspace, args, config);
         break;
       case "status":
-        status(store);
+        status(store, args);
         break;
       case "teardown":
         await teardown(workspace, args);
@@ -158,9 +158,11 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
     case "create": {
       // Resolve paths client-side: the daemon resolves relative paths against
       // its own cwd, not the caller's.
-      const dir = expandHome(required(args.positionals[0], "dir"));
+      const name = required(args.positionals[0], "name");
+      const dir = expandHome(required(args.positionals[1], "dir"));
       const prompt = required(promptFlag(args), "prompt");
       const { agents } = await client.createAgents({
+        name,
         dir,
         prompt,
         count: flagNumber(args.flags.n) ?? 1,
@@ -232,9 +234,11 @@ function register(workspace: WorkspaceManager, args: ParsedArgs): void {
 }
 
 async function create(workspace: WorkspaceManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
-  const dir = required(args.positionals[0], "dir");
+  const name = required(args.positionals[0], "name");
+  const dir = required(args.positionals[1], "dir");
   const prompt = required(promptFlag(args), "prompt");
   const createOptions = {
+    workspaceName: name,
     count: flagNumber(args.flags.n) ?? 1,
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
@@ -255,14 +259,24 @@ async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<
   }
 }
 
-function status(store: OrchestraStore): void {
-  const agents = store.listManagedAgentSummaries();
+function status(store: OrchestraStore, args: ParsedArgs): void {
+  const workspaceFilter = typeof args.flags.workspace === "string" ? args.flags.workspace : args.positionals[0];
+  const agents = store
+    .listManagedAgentSummaries()
+    .filter((agent) => !workspaceFilter || agent.workspaceName.toLowerCase().includes(workspaceFilter.toLowerCase()))
+    .sort(
+      (left, right) =>
+        left.workspaceName.localeCompare(right.workspaceName) ||
+        shortPath(left.repoPath ?? left.cwd).localeCompare(shortPath(right.repoPath ?? right.cwd)) ||
+        (left.createdAt ?? 0) - (right.createdAt ?? 0),
+    );
   if (!agents.length) {
-    console.log("no agents");
+    console.log(workspaceFilter ? `no agents matching workspace ${workspaceFilter}` : "no agents");
     return;
   }
   const rows = agents.map((agent) => ({
     id: agent.id,
+    workspace: agent.workspaceName,
     status: agent.status,
     turns: String(agent.turnCount),
     tokens: agent.tokensUsed === undefined ? "-" : compactNumber(agent.tokensUsed),
@@ -270,7 +284,7 @@ function status(store: OrchestraStore): void {
     workdir: shortPath(agent.repoPath ?? agent.cwd),
     last: oneLine(agent.lastAssistantMessageTail ?? agent.lastTurnSummary ?? "-"),
   }));
-  printTable(rows, ["id", "status", "turns", "tokens", "activity", "workdir", "last"]);
+  printTable(rows, ["id", "workspace", "status", "turns", "tokens", "activity", "workdir", "last"]);
   const pending = store.listPendingApprovals();
   if (pending.length) {
     console.log(`\npending approvals: ${pending.length}`);
@@ -285,7 +299,7 @@ async function remove(workspace: WorkspaceManager, args: ParsedArgs): Promise<vo
 
 function ls(store: OrchestraStore): void {
   for (const agent of store.listManagedAgents()) {
-    console.log(`${agent.id}\t${agent.status}\t${agent.repoPath ?? ""}\t${agent.branch}\t${agent.cwd}`);
+    console.log(`${agent.id}\t${agent.workspaceName}\t${agent.status}\t${agent.repoPath ?? ""}\t${agent.branch}\t${agent.cwd}`);
   }
 }
 
@@ -1029,8 +1043,8 @@ function printHelp(): void {
   console.log(`orchestra
 
 Usage:
-  orchestra create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
-  orchestra status
+  orchestra create <name> <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
+  orchestra status [workspace-name]
   orchestra teardown <id|repo-name|workdir|all>
   orchestra diff <id> [--out FILE]
   orchestra exec <id> "cmd"
@@ -1045,6 +1059,7 @@ Options:
   --transport proxy|stdio   default: proxy (only used when no orchestra server is reachable)
   --db PATH                 default: ~/.orchestra/orchestra.db
   --url URL                 orchestra server, default: $ORCHESTRA_URL or http://127.0.0.1:5751
+  --workspace NAME          filter status output by workspace name
   --local                   skip the orchestra server and use a direct codex app-server transport
 
 create, steer, interrupt, teardown, and remove are sent to the running

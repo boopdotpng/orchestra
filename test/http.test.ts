@@ -33,6 +33,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "ship workspace",
         dir: repo,
         count: 1,
         prompt: "ship it",
@@ -40,8 +41,9 @@ describe("Orchestra HTTP handler", () => {
       }),
     );
     expect(createResponse.status).toBe(200);
-    const created = (await createResponse.json()) as { agents: Array<{ id: string; status: string }> };
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; status: string; workspaceName: string }> };
     expect(created.agents[0]?.id).toMatch(/^[0-9a-f]{4}$/);
+    expect(created.agents[0]?.workspaceName).toBe("ship workspace");
 
     const statusResponse = await handler(new Request("http://127.0.0.1/status"));
     const status = (await statusResponse.json()) as { agents: unknown[]; approvals: unknown[] };
@@ -63,6 +65,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "teardown workspace",
         dir: repo,
         count: 2,
         prompt: "work",
@@ -102,6 +105,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "remove workspace",
         dir: repo,
         count: 2,
         prompt: "work",
@@ -139,6 +143,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "missing prompt",
         dir: repo,
       }),
     );
@@ -162,6 +167,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "history workspace",
         dir: repo,
         prompt: "ship it",
       }),

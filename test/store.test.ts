@@ -65,6 +65,7 @@ describe("OrchestraStore", () => {
     store.insertManagedAgent({
       id: "a3f1",
       repoId: repo.id,
+      workspaceName: "store test",
       cwd: "/run/a3f1",
       branch: "orchestra/a3f1",
       threadId: "thread-1",
@@ -97,6 +98,7 @@ describe("OrchestraStore", () => {
     store.insertManagedAgent({
       id: "a3f1",
       repoId: repo.id,
+      workspaceName: "approval test",
       cwd: "/run/a3f1",
       branch: "orchestra/a3f1",
       threadId: "thread-1",
@@ -131,6 +133,7 @@ describe("OrchestraStore", () => {
     store.insertManagedAgent({
       id: "a3f1",
       repoId: repo.id,
+      workspaceName: "startup test",
       cwd: "/run/a3f1",
       branch: "orchestra/a3f1",
       threadId: "thread-1",

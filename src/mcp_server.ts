@@ -15,14 +15,15 @@ server.tool(
   [
     "Create one or more isolated Codex agent workspaces.",
     "Return shape is always a JSON object with an agents array, never a bare id: { agents: [ManagedAgent, ...] }.",
-    "Each ManagedAgent includes id, repoId, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
+    "Each ManagedAgent includes id, repoId, workspaceName, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
     "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
-    "A prompt is required; create always starts the first turn so no dead idle agents are created.",
+    "A name and prompt are required; create always starts the first turn so no dead idle agents are created.",
     `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
     "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
   ].join(" "),
   {
+    name: z.string().min(1).describe("Required workspace/run name used to group these agents in the UI and status output."),
     dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
     n: z.number().int().positive().default(1).describe("Number of agents to create. Values greater than 1 fan out and return multiple ids in agents[]."),
     prompt: z.string().min(1).describe("Required first-turn prompt."),
@@ -33,7 +34,7 @@ server.tool(
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
   },
-  async ({ dir, n, prompt, onComplete, model, serviceTier }) => text(await post("/agents", { dir, count: n, prompt, onComplete, model, serviceTier })),
+  async ({ name, dir, n, prompt, onComplete, model, serviceTier }) => text(await post("/agents", { name, dir, count: n, prompt, onComplete, model, serviceTier })),
 );
 
 server.tool(

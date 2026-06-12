@@ -16,6 +16,7 @@ export type WorkspaceManagerOptions = {
 };
 
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
+  workspaceName: string;
   count?: number | undefined;
   prompt: string;
   onComplete?: string | undefined;
@@ -63,11 +64,15 @@ export class WorkspaceManager {
   }
 
   async create(dir: string, options: CreateAgentsOptions): Promise<ManagedAgent[]> {
+    const workspaceName = options.workspaceName.trim();
+    if (!workspaceName) {
+      throw new Error("name is required");
+    }
     const source = this.resolveCreateSource(dir);
     const count = options.count ?? 1;
     const agents: ManagedAgent[] = [];
     for (let index = 0; index < count; index += 1) {
-      const agent = await this.createOne(source, options);
+      const agent = await this.createOne(source, { ...options, workspaceName });
       agents.push(agent);
     }
     return agents;
@@ -323,6 +328,7 @@ export class WorkspaceManager {
 
     const thread = await this.manager.startAgent({
       cwd,
+      name: options.workspaceName,
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
       approvalPolicy: options.approvalPolicy ?? "never",
@@ -332,6 +338,7 @@ export class WorkspaceManager {
     const managed: ManagedAgent = {
       id,
       repoId: source.repo.id,
+      workspaceName: options.workspaceName,
       repoPath: source.repo.path,
       baseCommit: orchestraBaseCommit,
       sourcePath: source.sourcePath,

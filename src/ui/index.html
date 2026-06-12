@@ -467,7 +467,7 @@ const POLL_MS = 10000;
 const state = {
   agents: [],          // ManagedAgentSummary[] from /status
   selected: null,      // agent id shown in main pane (null = overview)
-  repoView: null,      // workdir path shown as a grid in main pane (null = none)
+  repoView: null,      // workspace group key shown as a grid in main pane (null = none)
   tab: "convo",        // "convo" | "diff"
   convo: {},           // id -> message[]
   diffs: {},           // id -> diff text
@@ -617,20 +617,21 @@ function renderSidebar() {
   renderFleet();
   const list = $("sideList");
   if (!state.agents.length) {
-    list.innerHTML = `<div class="side-empty">No agents yet.<br/><br/>Create some from the CLI or MCP:<br/><code>orchestra create &lt;dir&gt; -n 4 --prompt "…"</code></div>`;
+    list.innerHTML = `<div class="side-empty">No agents yet.<br/><br/>Create some from the CLI or MCP:<br/><code>orchestra create &lt;name&gt; &lt;dir&gt; -n 4 --prompt "…"</code></div>`;
     return;
   }
   const byRepo = new Map();
   for (const a of state.agents) {
-    const k = a.repoPath || "(unknown)";
+    const k = workspaceKey(a);
     if (!byRepo.has(k)) byRepo.set(k, []);
     byRepo.get(k).push(a);
   }
   let html = "";
-  for (const [repo, agents] of [...byRepo.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+  for (const [repo, agents] of [...byRepo.entries()].sort((x, y) => workspaceMeta(x[0]).name.localeCompare(workspaceMeta(y[0]).name))) {
+    const meta = workspaceMeta(repo);
     agents.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0));
     html += `<div class="repo">
-      <div class="repo-label ${repo === state.repoView ? "sel" : ""}" data-repo="${esc(repo)}" title="${esc(repo)} — open grid view"><span class="dirname">${esc(dirName(repo))}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
+      <div class="repo-label ${repo === state.repoView ? "sel" : ""}" data-repo="${esc(repo)}" title="${esc(meta.path)} — open workspace view"><span class="dirname">${esc(meta.name)}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
       ${agents.map(rowHtml).join("")}
     </div>`;
   }
@@ -713,7 +714,16 @@ function showOverview() {
 }
 function backToList() { history.back(); }
 function resetToOverview() { if (location.hash && location.hash !== "#/") history.replaceState({}, "", "#/"); showOverview(); }
-function repoAgents(path) { return state.agents.filter((a) => (a.repoPath || "(unknown)") === path); }
+function workspaceName(a) { return (a.workspaceName || dirName(a.repoPath || a.cwd || "(unknown)")).trim() || "workspace"; }
+function workspaceKey(a) { return JSON.stringify([workspaceName(a), a.repoPath || "(unknown)"]); }
+function workspaceMeta(key) {
+  try {
+    const parsed = JSON.parse(key);
+    if (Array.isArray(parsed)) return { name: String(parsed[0] || "workspace"), path: String(parsed[1] || "(unknown)") };
+  } catch {}
+  return { name: key || "workspace", path: "(unknown)" };
+}
+function repoAgents(path) { return state.agents.filter((a) => workspaceKey(a) === path); }
 function applyRoute() {
   const r = decodeRoute(location.hash);
   if (r.id && agentById(r.id)) showAgent(r.id);
@@ -726,23 +736,26 @@ window.addEventListener("popstate", applyRoute);
 function renderOverview() {
   const counts = { running: 0, waiting_approval: 0, error: 0, idle: 0 };
   for (const a of state.agents) if (a.status in counts) counts[a.status]++;
-  const repos = [...new Set(state.agents.map((a) => a.repoPath || "(unknown)"))].sort();
+  const repos = [...new Set(state.agents.map(workspaceKey))].sort((x, y) => workspaceMeta(x).name.localeCompare(workspaceMeta(y).name));
   $("main").innerHTML = `
     <div class="welcome">
       <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v3M10 13l-3.5 3M14 13l3.5 3"/></svg>
       ${state.agents.length ? `
-        <h2>${state.agents.length} agent${state.agents.length === 1 ? "" : "s"} across ${repos.length} repo${repos.length === 1 ? "" : "s"}</h2>
+        <h2>${state.agents.length} agent${state.agents.length === 1 ? "" : "s"} across ${repos.length} workspace${repos.length === 1 ? "" : "s"}</h2>
         <div class="ov-tiles">
           <div class="ov-tile running"><div class="n">${counts.running}</div><div class="t">running</div></div>
           <div class="ov-tile waiting"><div class="n">${counts.waiting_approval}</div><div class="t">need approval</div></div>
           <div class="ov-tile idle"><div class="n">${counts.idle}</div><div class="t">idle</div></div>
           <div class="ov-tile error"><div class="n">${counts.error}</div><div class="t">errors</div></div>
         </div>
-        <div class="ov-repos">${repos.map((p) => `<button class="ov-repo" data-repo="${esc(p)}" title="${esc(p)}">${esc(dirName(p))}<span class="count">${repoAgents(p).length}</span></button>`).join("")}</div>
-        <div class="sub">Open a workdir to watch all its agents in a live grid, or pick one agent from the sidebar to steer it.</div>
+        <div class="ov-repos">${repos.map((p) => {
+          const meta = workspaceMeta(p);
+          return `<button class="ov-repo" data-repo="${esc(p)}" title="${esc(meta.path)}">${esc(meta.name)}<span class="count">${repoAgents(p).length}</span></button>`;
+        }).join("")}</div>
+        <div class="sub">Open a workspace to watch all its agents in a live grid, or pick one agent from the sidebar to steer it.</div>
       ` : `
         <h2>No agents yet</h2>
-        <div class="sub">Create agents from the CLI or MCP and they'll appear here, live.<br/><br/><code>orchestra create &lt;dir&gt; -n 4 --prompt "…"</code></div>
+        <div class="sub">Create agents from the CLI or MCP and they'll appear here, live.<br/><br/><code>orchestra create &lt;name&gt; &lt;dir&gt; -n 4 --prompt "…"</code></div>
       `}
     </div>`;
   document.querySelectorAll("#main .ov-repo").forEach((b) => b.addEventListener("click", () => openRepo(b.dataset.repo)));
@@ -783,6 +796,7 @@ function cardHtml(a) {
 }
 function renderRepoView(force = false) {
   const path = state.repoView;
+  const meta = workspaceMeta(path);
   const agents = repoAgents(path).sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0));
   if (!agents.length) { resetToOverview(); return; }
   const grid = $("rgrid");
@@ -798,8 +812,8 @@ function renderRepoView(force = false) {
     <div class="detail-head">
       <button class="backbtn" id="r_back" title="Back to agents">←</button>
       <div class="meta">
-        <div class="title"><span class="id">${esc(dirName(path))}</span></div>
-        <div class="sub">${esc(path)}</div>
+        <div class="title"><span class="id">${esc(meta.name)}</span></div>
+        <div class="sub">${esc(meta.path)}</div>
         <div class="stats" id="rstats">${repoStatsHtml(agents)}</div>
       </div>
     </div>

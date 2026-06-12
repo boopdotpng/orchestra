@@ -123,8 +123,10 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "POST" && url.pathname === "/agents") {
     const body = await readBody(request);
+    const name = requiredString(body.name, "name");
     const prompt = requiredString(body.prompt, "prompt");
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
+      workspaceName: name,
       count: typeof body.count === "number" ? body.count : 1,
       prompt,
       onComplete: typeof body.onComplete === "string" ? body.onComplete : typeof body.on_complete === "string" ? body.on_complete : undefined,

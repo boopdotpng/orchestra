@@ -24,6 +24,22 @@ afterEach(() => {
 // (async-served) stub. Never use Bun.spawnSync here: it blocks the event
 // loop, the in-process stub can never respond, and the CLI falls back.
 describe("orchestra CLI daemon routing", () => {
+  test("routes create with required workspace name and dir", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "POST /agents": { agents: [{ id: "ab12", status: "running", cwd: "/tmp/runs/repo/ab12", threadId: "thread-1" }] },
+    });
+    const root = mkdtempSync(join(tmpdir(), "orchestra-cli-source-"));
+    roots.push(root);
+
+    const proc = await runCli(["create", "auth cleanup", root, "--prompt", "ship it", "-n", "2", "--url", baseUrl]);
+    expect(proc.stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout).toBe("ab12\trunning\t/tmp/runs/repo/ab12\tthread-1\n");
+    const create = requests.find((request) => request.path === "/agents");
+    expect(create?.body).toMatchObject({ name: "auth cleanup", dir: root, prompt: "ship it", count: 2 });
+  });
+
   test("routes interrupt through a reachable orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {

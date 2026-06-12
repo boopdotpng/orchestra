@@ -33,6 +33,7 @@ describe("WorkspaceManager", () => {
 
     const repo = workspace.register(source);
     const agents = await workspace.create(source, {
+      workspaceName: "source cleanup",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -41,12 +42,14 @@ describe("WorkspaceManager", () => {
     expect(agents).toHaveLength(1);
     const agent = agents[0]!;
     expect(agent.id).toMatch(/^[0-9a-f]{4}$/);
+    expect(agent.workspaceName).toBe("source cleanup");
     expect(agent.cwd.startsWith(runs)).toBe(true);
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
     expect(backend.startedThreads[0]?.model).toBe("gpt-6");
     expect(backend.startedThreads[0]?.serviceTier).toBe("priority");
     expect(backend.startedThreads[0]?.approvalPolicy).toBe("never");
     expect(backend.startedThreads[0]?.sandbox).toBe("danger-full-access");
+    expect(backend.threadNames[0]).toEqual({ threadId: "thread-1", name: "source cleanup" });
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
 
@@ -65,6 +68,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "completion hook",
       runsRoot: runs,
       prompt: "hello agent",
       onComplete: `mkdir -p ${done} && touch ${done}/{id}`,
@@ -100,6 +104,7 @@ describe("WorkspaceManager", () => {
     writeFileSync(join(source, "scratch.txt"), "local scratch\n");
 
     const agents = await workspace.create(source, {
+      workspaceName: "dirty tree",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -128,6 +133,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const [agent] = await workspace.create(source, {
+      workspaceName: "diff test",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -160,6 +166,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "compare diffs",
       count: 2,
       runsRoot: runs,
       prompt: "hello agent",
@@ -200,6 +207,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "standouts",
       count: 3,
       runsRoot: runs,
       prompt: "hello agent",
@@ -254,6 +262,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const [parent] = await workspace.create(source, {
+      workspaceName: "parent workspace",
       runsRoot: runs,
       prompt: "parent agent",
     });
@@ -264,6 +273,7 @@ describe("WorkspaceManager", () => {
     const parentHead = git(parent!.cwd, ["rev-parse", "HEAD"]);
 
     const [child] = await workspace.create(parent!.cwd, {
+      workspaceName: "child workspace",
       runsRoot: runs,
       prompt: "child agent",
     });
@@ -292,6 +302,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "teardown",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -313,11 +324,13 @@ class FakeBackend implements CodexBackend {
   requests = new EventBus<BackendServerRequest>();
   startedThreads: Array<{
     cwd?: string | undefined;
+    name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
   }> = [];
+  threadNames: Array<{ threadId: string; name: string }> = [];
   startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
   private threadCount = 0;
 
@@ -334,6 +347,7 @@ class FakeBackend implements CodexBackend {
   }
   async startThread(options: {
     cwd?: string | undefined;
+    name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
     approvalPolicy?: string | undefined;
@@ -360,7 +374,8 @@ class FakeBackend implements CodexBackend {
   async readThread() {
     return {};
   }
-  async setThreadName() {
+  async setThreadName(threadId: string, name: string) {
+    this.threadNames.push({ threadId, name });
     return {};
   }
   async setThreadGoal() {

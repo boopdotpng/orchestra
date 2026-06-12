@@ -53,6 +53,7 @@ export type ConfigUpdateRequest = {
 };
 
 export type CreateAgentsRequest = {
+  name: string;
   dir: string;
   count?: number;
   prompt: string;
