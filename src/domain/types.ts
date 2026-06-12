@@ -40,6 +40,8 @@ export type ManagedAgent = {
   repoId: number;
   repoPath?: string | undefined;
   baseCommit?: string | undefined;
+  sourcePath?: string | undefined;
+  parentAgentId?: string | undefined;
   cwd: string;
   branch: string;
   threadId: string;

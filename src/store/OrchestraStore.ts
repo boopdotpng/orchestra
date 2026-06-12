@@ -109,6 +109,9 @@ export class OrchestraStore {
       CREATE TABLE IF NOT EXISTS managed_agents (
         id TEXT PRIMARY KEY,
         repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        source_path TEXT,
+        parent_agent_id TEXT,
+        base_commit TEXT,
         cwd TEXT NOT NULL,
         branch TEXT NOT NULL,
         thread_id TEXT NOT NULL UNIQUE,
@@ -119,6 +122,9 @@ export class OrchestraStore {
       );
     `);
     this.addColumnIfMissing("managed_agents", "on_complete", "TEXT");
+    this.addColumnIfMissing("managed_agents", "source_path", "TEXT");
+    this.addColumnIfMissing("managed_agents", "parent_agent_id", "TEXT");
+    this.addColumnIfMissing("managed_agents", "base_commit", "TEXT");
   }
 
   applyEvent(event: AgentEvent): void {
@@ -259,10 +265,16 @@ export class OrchestraStore {
   insertManagedAgent(agent: ManagedAgent): void {
     this.db
       .query(
-        `INSERT INTO managed_agents (id, repo_id, cwd, branch, thread_id, active_turn_id, status, on_complete, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO managed_agents (
+          id, repo_id, source_path, parent_agent_id, base_commit, cwd, branch,
+          thread_id, active_turn_id, status, on_complete, created_at
+        )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           repo_id = excluded.repo_id,
+          source_path = excluded.source_path,
+          parent_agent_id = excluded.parent_agent_id,
+          base_commit = excluded.base_commit,
           cwd = excluded.cwd,
           branch = excluded.branch,
           thread_id = excluded.thread_id,
@@ -273,6 +285,9 @@ export class OrchestraStore {
       .run(
         agent.id,
         agent.repoId,
+        agent.sourcePath ?? null,
+        agent.parentAgentId ?? null,
+        agent.baseCommit ?? null,
         agent.cwd,
         agent.branch,
         agent.threadId,
@@ -286,7 +301,7 @@ export class OrchestraStore {
   getManagedAgent(id: string): ManagedAgent | undefined {
     const row = this.db
       .query(
-        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+        `SELECT managed_agents.*, repos.path AS repo_path, COALESCE(managed_agents.base_commit, repos.base_commit) AS base_commit
          FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
          WHERE managed_agents.id = ?`,
       )
@@ -297,7 +312,7 @@ export class OrchestraStore {
   listManagedAgents(): ManagedAgent[] {
     const rows = this.db
       .query(
-        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+        `SELECT managed_agents.*, repos.path AS repo_path, COALESCE(managed_agents.base_commit, repos.base_commit) AS base_commit
          FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
          ORDER BY managed_agents.created_at DESC`,
       )
@@ -333,7 +348,7 @@ export class OrchestraStore {
   listManagedAgentsForRepo(repoId: number): ManagedAgent[] {
     const rows = this.db
       .query(
-        `SELECT managed_agents.*, repos.path AS repo_path, repos.base_commit AS base_commit
+        `SELECT managed_agents.*, repos.path AS repo_path, COALESCE(managed_agents.base_commit, repos.base_commit) AS base_commit
          FROM managed_agents JOIN repos ON repos.id = managed_agents.repo_id
          WHERE repo_id = ?
          ORDER BY managed_agents.created_at DESC`,
@@ -604,6 +619,8 @@ function managedAgentFromRow(row: Row): ManagedAgent {
     repoId: Number(row.repo_id),
     repoPath: optionalString(row.repo_path),
     baseCommit: optionalString(row.base_commit),
+    sourcePath: optionalString(row.source_path),
+    parentAgentId: optionalString(row.parent_agent_id),
     cwd: String(row.cwd),
     branch: String(row.branch),
     threadId: String(row.thread_id),

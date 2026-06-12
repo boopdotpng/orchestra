@@ -142,7 +142,7 @@ MCP tools:
 
 - `register`: pin a source repo base commit.
 - `teardown`: remove Orchestra-managed agents and workspaces by agent id, repo folder name, source workdir, or `all`.
-- `create`: create one or more isolated agent workspaces. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `repoPath`, `baseCommit`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
+- `create`: create one or more isolated agent workspaces. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `repoPath`, `baseCommit`, `sourcePath`, optional `parentAgentId`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
 - `ls`: list managed agents.
 - `status`: show agents and pending approvals.
 - `remove`: remove one managed agent and its workspace by id.

@@ -121,6 +121,7 @@
   .arow .acol { flex: 1; min-width: 0; }
   .arow .l1 { display: flex; align-items: baseline; gap: 8px; }
   .arow .aid { font-family: var(--mono); font-weight: 700; font-size: 13.5px; }
+  .arow .aparent { font-family: var(--mono); font-size: 10px; color: var(--text-faint); border: 1px solid var(--border-soft); border-radius: 5px; padding: 0 5px; white-space: nowrap; }
   .arow .astat { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
   .arow .astat.waiting_approval { color: var(--yellow); font-weight: 700; }
   .arow .astat.error { color: var(--red); font-weight: 700; }
@@ -189,6 +190,7 @@
   .rc-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0; }
   .rc-head .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--text-faint); }
   .rc-head .rid { font-family: var(--mono); font-weight: 700; font-size: 13.5px; }
+  .rc-head .parent { font-family: var(--mono); font-size: 10px; color: var(--text-faint); border: 1px solid var(--border-soft); border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
   .rc-head .rtime { margin-left: auto; font-size: 10.5px; color: var(--text-faint); flex-shrink: 0; }
   .rc-out {
     flex: 1; overflow-y: auto; min-height: 0; padding: 9px 12px;
@@ -226,6 +228,7 @@
   .badge.waiting_approval { color: var(--yellow); background: #2e2410; border-color: #5a4410; }
   .badge.error { color: var(--red); background: #2d1213; border-color: #5a2122; }
   .badge.notLoaded { color: var(--text-faint); background: #1a1f27; border-color: var(--border-soft); }
+  .badge.nested { color: var(--text-dim); background: transparent; border-color: var(--border-soft); }
   .badge.running::before { content: "●"; margin-right: 4px; animation: pulse 1.1s infinite; }
   .badge.waiting_approval::before { content: "●"; margin-right: 4px; animation: pulse 1.1s infinite; }
 
@@ -501,11 +504,16 @@ function toast(msg, kind = "") {
   $("toasts").appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 300); }, 3600);
 }
-function esc(s) { return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function shortPath(p) { if (!p) return ""; const parts = String(p).split("/"); return parts.length > 3 ? "…/" + parts.slice(-3).join("/") : p; }
 function dirName(p) { return String(p || "").split("/").filter(Boolean).pop() || p; }
 function agentById(id) { return state.agents.find((a) => a.id === id); }
 function statusLabel(s) { return s === "waiting_approval" ? "needs approval" : s === "notLoaded" ? "not loaded" : s; }
+function parentLabel(a) { return a && a.parentAgentId ? `child ${a.parentAgentId}` : ""; }
+function nestedTitle(a) {
+  if (!a || !a.parentAgentId) return "";
+  return `Nested agent created from ${a.parentAgentId}${a.sourcePath ? ` · source ${a.sourcePath}` : ""}`;
+}
 function fmtTok(n) {
   if (!n && n !== 0) return null;
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -634,11 +642,13 @@ function renderSidebar() {
 function rowHtml(a) {
   const pre = previewFor(a);
   const needs = a.pendingApprovals && a.pendingApprovals.length;
+  const parent = parentLabel(a);
   return `<div class="arow ${a.id === state.selected ? "sel" : ""}" data-id="${esc(a.id)}">
     <span class="dot ${a.status}"></span>
     <div class="acol">
       <div class="l1">
         <span class="aid">${esc(a.id)}</span>
+        ${parent ? `<span class="aparent" title="${esc(nestedTitle(a))}">${esc(parent)}</span>` : ""}
         <span class="astat ${a.status}">${esc(needs ? "needs approval" : statusLabel(a.status))}</span>
         <span class="atime">${esc(fmtAgo(a.lastActivityAt))}</span>
       </div>
@@ -758,10 +768,12 @@ function cardHtml(a) {
   const needs = a.pendingApprovals && a.pendingApprovals.length;
   const text = gridTextFor(a);
   const tok = fmtTok(a.tokensUsed);
+  const parent = parentLabel(a);
   return `<div class="rcard ${a.status}" data-id="${esc(a.id)}">
     <div class="rc-head">
       <span class="dot ${a.status}"></span>
       <span class="rid">${esc(a.id)}</span>
+      ${parent ? `<span class="parent" title="${esc(nestedTitle(a))}">${esc(parent)}</span>` : ""}
       <span class="badge ${a.status}">${esc(needs ? "needs approval" : statusLabel(a.status))}</span>
       <span class="rtime">${esc(fmtAgo(a.lastActivityAt))}</span>
     </div>
@@ -826,12 +838,14 @@ function renderDetail() {
   const a = agentById(state.selected);
   if (!a) { resetToOverview(); return; }
   const tok = fmtTok(a.tokensUsed);
+  const nested = parentLabel(a);
+  const source = a.sourcePath && a.sourcePath !== a.repoPath ? ` · from ${shortPath(a.sourcePath)}` : "";
   $("main").innerHTML = `
     <div class="detail-head">
       <button class="backbtn" id="d_back" title="Back to agents">←</button>
       <div class="meta">
-        <div class="title"><span class="id">${esc(a.id)}</span><span class="badge ${a.status}">${esc(statusLabel(a.status))}</span></div>
-        <div class="sub">${esc(a.branch || "")} · ${esc(shortPath(a.cwd))}</div>
+        <div class="title"><span class="id">${esc(a.id)}</span>${nested ? `<span class="badge nested" title="${esc(nestedTitle(a))}">${esc(nested)}</span>` : ""}<span class="badge ${a.status}">${esc(statusLabel(a.status))}</span></div>
+        <div class="sub">${esc(a.branch || "")} · ${esc(shortPath(a.cwd))}${esc(source)}</div>
         <div class="stats">
           <span><b>${a.turnCount ?? 0}</b> turns</span>
           ${tok ? `<span><b>${esc(tok)}</b> tokens</span>` : ""}

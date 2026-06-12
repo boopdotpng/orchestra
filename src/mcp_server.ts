@@ -15,7 +15,7 @@ server.tool(
   [
     "Create one or more isolated Codex agent workspaces.",
     "Return shape is always a JSON object with an agents array, never a bare id: { agents: [ManagedAgent, ...] }.",
-    "Each ManagedAgent includes id, repoId, repoPath, baseCommit, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
+    "Each ManagedAgent includes id, repoId, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
     "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
     "A prompt is required; create always starts the first turn so no dead idle agents are created.",

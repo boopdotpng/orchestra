@@ -114,6 +114,43 @@ describe("WorkspaceManager", () => {
     store.close();
   });
 
+  test("tracks agents created from managed workspaces as nested children of the original repo", async () => {
+    const root = tempRoot();
+    const source = join(root, "blackhole-py");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const [parent] = await workspace.create(source, {
+      runsRoot: runs,
+      prompt: "parent agent",
+    });
+    expect(parent).toBeDefined();
+    writeFileSync(join(parent!.cwd, "README.md"), "# test\n\nparent commit\n");
+    git(parent!.cwd, ["add", "README.md"]);
+    git(parent!.cwd, ["commit", "-m", "parent workspace commit"]);
+    const parentHead = git(parent!.cwd, ["rev-parse", "HEAD"]);
+
+    const [child] = await workspace.create(parent!.cwd, {
+      runsRoot: runs,
+      prompt: "child agent",
+    });
+
+    expect(child).toBeDefined();
+    expect(child!.repoPath).toBe(source);
+    expect(child!.sourcePath).toBe(parent!.cwd);
+    expect(child!.parentAgentId).toBe(parent!.id);
+    expect(child!.baseCommit).toBe(parentHead);
+    expect(child!.cwd.startsWith(join(runs, "blackhole-py"))).toBe(true);
+    expect(readFileSync(join(child!.cwd, "README.md"), "utf8")).toContain("parent commit");
+    expect(store.listManagedAgentsForRepo(parent!.repoId).map((agent) => agent.id).sort()).toEqual([child!.id, parent!.id].sort());
+
+    store.close();
+  });
+
   test("tears down agents by repo folder name after source repo is deleted", async () => {
     const root = tempRoot();
     const source = join(root, "bh-tournament");

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentManager } from "../manager/AgentManager";
 import { DEFAULT_MODEL, DEFAULT_SERVICE_TIER } from "../config";
@@ -19,6 +19,13 @@ export type CreateAgentsOptions = WorkspaceManagerOptions & {
   count?: number | undefined;
   prompt: string;
   onComplete?: string | undefined;
+};
+
+type CreateSource = {
+  repo: RepoRegistration;
+  sourcePath: string;
+  baseCommit: string;
+  parentAgentId?: string | undefined;
 };
 
 export class WorkspaceManager {
@@ -48,11 +55,11 @@ export class WorkspaceManager {
   }
 
   async create(dir: string, options: CreateAgentsOptions): Promise<ManagedAgent[]> {
-    const repo = this.register(dir);
+    const source = this.resolveCreateSource(dir);
     const count = options.count ?? 1;
     const agents: ManagedAgent[] = [];
     for (let index = 0; index < count; index += 1) {
-      const agent = await this.createOne(repo, options);
+      const agent = await this.createOne(source, options);
       agents.push(agent);
     }
     return agents;
@@ -196,13 +203,48 @@ export class WorkspaceManager {
     return agents;
   }
 
-  private async createOne(repo: RepoRegistration, options: CreateAgentsOptions): Promise<ManagedAgent> {
+  private resolveCreateSource(dir: string): CreateSource {
+    const sourcePath = gitRoot(dir);
+    const baseCommit = git(sourcePath, ["rev-parse", "HEAD"]);
+    const baseBranch = git(sourcePath, ["branch", "--show-current"]) || "HEAD";
+    const parentAgent = this.findContainingAgent(sourcePath);
+    if (parentAgent?.repoPath) {
+      const repo = this.store.getRepoByPath(parentAgent.repoPath);
+      if (repo) {
+        return {
+          repo,
+          sourcePath,
+          baseCommit,
+          parentAgentId: parentAgent.id,
+        };
+      }
+    }
+    return {
+      repo: this.store.upsertRepo({
+        path: sourcePath,
+        baseCommit,
+        baseBranch,
+      }),
+      sourcePath,
+      baseCommit,
+    };
+  }
+
+  private findContainingAgent(sourcePath: string): ManagedAgent | undefined {
+    const normalizedSource = resolve(sourcePath);
+    return this.store
+      .listManagedAgents()
+      .filter((agent) => isSameOrChildPath(resolve(agent.cwd), normalizedSource))
+      .sort((left, right) => right.cwd.length - left.cwd.length)[0];
+  }
+
+  private async createOne(source: CreateSource, options: CreateAgentsOptions): Promise<ManagedAgent> {
     const id = uniqueAgentId((candidate) => !this.store.getManagedAgent(candidate));
     const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
-    const cwd = join(runsRoot, basename(repo.path), id);
+    const cwd = join(runsRoot, basename(source.repo.path), id);
     mkdirSync(dirname(cwd), { recursive: true });
-    copyReflink(repo.path, cwd);
-    git(cwd, ["switch", "-c", `orchestra/${id}`, repo.baseCommit]);
+    copyReflink(source.sourcePath, cwd);
+    git(cwd, ["switch", "-c", `orchestra/${id}`, source.baseCommit]);
 
     const thread = await this.manager.startAgent({
       cwd,
@@ -214,9 +256,11 @@ export class WorkspaceManager {
     });
     const managed: ManagedAgent = {
       id,
-      repoId: repo.id,
-      repoPath: repo.path,
-      baseCommit: repo.baseCommit,
+      repoId: source.repo.id,
+      repoPath: source.repo.path,
+      baseCommit: source.baseCommit,
+      sourcePath: source.sourcePath,
+      parentAgentId: source.parentAgentId,
       cwd,
       branch: `orchestra/${id}`,
       threadId: thread.threadId,
@@ -292,6 +336,10 @@ function gitRoot(dir: string): string {
 
 function isBareRepoName(target: string): boolean {
   return target.length > 0 && target !== "." && target !== ".." && !target.includes("/") && !target.startsWith("~");
+}
+
+function isSameOrChildPath(parent: string, child: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
 }
 
 function git(cwd: string, args: string[], options: { allowFailure?: boolean } = {}): string {
