@@ -53,6 +53,50 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("filters status and standouts by exact workspace name", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const targetResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "target workspace",
+        dir: repo,
+        count: 1,
+        prompt: "ship it",
+      }),
+    );
+    const otherResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "other workspace",
+        dir: repo,
+        count: 1,
+        prompt: "ship it",
+      }),
+    );
+    const target = (await targetResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    const other = (await otherResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    writeFileSync(join(target.agents[0]!.cwd, "target.ts"), "export const target = true;\n");
+    writeFileSync(join(other.agents[0]!.cwd, "other.ts"), "export const other = true;\n");
+
+    const statusResponse = await handler(new Request("http://127.0.0.1/status?workspace=TARGET%20WORKSPACE"));
+    const status = (await statusResponse.json()) as { agents: Array<{ id: string }>; approvals: unknown[] };
+    expect(status.agents.map((agent) => agent.id)).toEqual([target.agents[0]!.id]);
+    expect(status.approvals).toHaveLength(0);
+
+    const standoutsResponse = await handler(new Request("http://127.0.0.1/standouts?workspace=target%20workspace"));
+    const standouts = await standoutsResponse.text();
+    expect(standouts).toContain(target.agents[0]!.id);
+    expect(standouts).not.toContain(other.agents[0]!.id);
+
+    store.close();
+  });
+
   test("tears down managed agents for a repository", async () => {
     const root = tempRoot();
     const repo = join(root, "repo");

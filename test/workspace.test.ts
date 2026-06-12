@@ -240,13 +240,24 @@ describe("WorkspaceManager", () => {
       method: "turn/completed",
       params: { threadId: broad!.threadId, turn: { id: broad!.activeTurnId, status: "completed" } },
     });
+    const [other] = await workspace.create(source, {
+      workspaceName: "other standouts",
+      count: 1,
+      runsRoot: runs,
+      prompt: "hello other agent",
+    });
+    expect(other).toBeDefined();
+    mkdirSync(join(other!.cwd, "src"));
+    writeFileSync(join(other!.cwd, "src", "other.ts"), Array.from({ length: 20 }, (_, index) => `export const other${index} = ${index};`).join("\n") + "\n");
 
-    const text = workspace.standouts();
+    const text = workspace.standouts("standouts");
 
     expect(text).toContain("Standouts are mechanical signals");
     expect(text).toContain(`most code written:\n  ${code!.id}: +8 -0`);
     expect(text).toContain(`finished last:\n  ${broad!.id}: idle`);
     expect(text).toContain(`broadest surface area:\n  ${broad!.id}: 3 surfaces`);
+    expect(text).not.toContain(other!.id);
+    expect(workspace.standouts("missing")).toBe("no agents matching workspace missing");
 
     store.close();
   });

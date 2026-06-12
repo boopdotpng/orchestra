@@ -146,8 +146,13 @@ export class WorkspaceManager {
     ].join("\n");
   }
 
-  standouts(): string {
-    const summaries = this.store.listManagedAgentSummaries();
+  standouts(workspaceName?: string | undefined): string {
+    const summaries = this.store
+      .listManagedAgentSummaries()
+      .filter((agent) => workspaceName === undefined || sameWorkspaceName(agent.workspaceName, workspaceName));
+    if (!summaries.length) {
+      return workspaceName ? `no agents matching workspace ${workspaceName}` : "no agents";
+    }
     const stats = summaries.map((agent) => ({ agent, stats: this.diffStats(agent.id) }));
     const byCodeWritten = [...stats].sort((left, right) => right.stats.additions - left.stats.additions || left.agent.id.localeCompare(right.agent.id));
     const finished = [...stats]
@@ -523,6 +528,10 @@ function surfaceForFile(path: string): string {
 
 function surfaceSummary(surfaces: string[]): string {
   return surfaces.length ? surfaces.join(", ") : "no changed surfaces";
+}
+
+function sameWorkspaceName(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function plural(count: number, singular: string): string {

@@ -40,12 +40,14 @@ server.tool(
 server.tool(
   "status",
   [
-    "Show enriched status for all agents, including last message tail, turn counts, token usage, last activity, and any pending approvals.",
+    "Show enriched status for agents in one workspace, including last message tail, turn counts, token usage, last activity, and any pending approvals.",
     "For Claude Code monitoring, run `orchestra monitor <agent-id>` for one agent or `orchestra monitor <workdir>` to wait for every agent in a workdir.",
     "That monitor command prints only completion lines: once for a single agent, or once per agent completion in a watched workdir.",
   ].join(" "),
-  {},
-  async () => text(await get("/status")),
+  {
+    workspace: z.string().min(1).describe("Required exact workspace/run name to show."),
+  },
+  async ({ workspace }) => text(await get(`/status?workspace=${encodeURIComponent(workspace)}`)),
 );
 
 server.tool(
@@ -76,9 +78,11 @@ server.tool(
 
 server.tool(
   "standouts",
-  "Show top-3 mechanical standout markers across agents: most code written, finished last, and broadest surface area. These are interesting signals, not quality scores.",
-  {},
-  async () => ({ content: [{ type: "text", text: await getText("/standouts") }] }),
+  "Show top-3 mechanical standout markers within one workspace: most code written, finished last, and broadest surface area. These are interesting signals, not quality scores.",
+  {
+    workspace: z.string().min(1).describe("Required exact workspace/run name to inspect."),
+  },
+  async ({ workspace }) => ({ content: [{ type: "text", text: await getText(`/standouts?workspace=${encodeURIComponent(workspace)}`) }] }),
 );
 
 server.tool(

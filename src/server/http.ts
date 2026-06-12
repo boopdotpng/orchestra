@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import type { AgentEvent, Json } from "../domain/types";
+import type { AgentEvent, Approval, Json, ManagedAgentSummary } from "../domain/types";
 import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
 import { ORCHESTRA_API_ROUTES } from "./api";
 
@@ -53,9 +53,11 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
   }
 
   if (request.method === "GET" && url.pathname === "/status") {
+    const workspace = workspaceNameParam(url);
+    const agents = filterByWorkspaceName(deps.store.listManagedAgentSummaries(), workspace);
     return jsonResponse({
-      agents: deps.store.listManagedAgentSummaries(),
-      approvals: deps.store.listPendingApprovals(),
+      agents,
+      approvals: filterApprovalsByAgents(deps.store.listPendingApprovals(), agents, workspace),
       rateLimits: deps.manager.rateLimits ?? null,
     });
   }
@@ -114,7 +116,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
   }
 
   if (request.method === "GET" && url.pathname === "/standouts") {
-    return textResponse(deps.workspace.standouts());
+    return textResponse(deps.workspace.standouts(workspaceNameParam(url)));
   }
 
   if (request.method === "GET" && url.pathname === "/agents") {
@@ -269,6 +271,29 @@ function serviceTier(value: unknown) {
 
 function configScope(value: unknown): ConfigScope {
   return value === "local" ? "local" : "global";
+}
+
+function workspaceNameParam(url: URL): string | undefined {
+  return url.searchParams.get("workspace") ?? url.searchParams.get("workspaceName") ?? undefined;
+}
+
+function filterByWorkspaceName(agents: ManagedAgentSummary[], workspace: string | undefined): ManagedAgentSummary[] {
+  if (!workspace) {
+    return agents;
+  }
+  return agents.filter((agent) => sameWorkspaceName(agent.workspaceName, workspace));
+}
+
+function filterApprovalsByAgents(approvals: Approval[], agents: ManagedAgentSummary[], workspace: string | undefined): Approval[] {
+  if (!workspace) {
+    return approvals;
+  }
+  const threadIds = new Set(agents.map((agent) => agent.threadId));
+  return approvals.filter((approval) => approval.threadId !== undefined && threadIds.has(approval.threadId));
+}
+
+function sameWorkspaceName(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string): Response {
