@@ -40,10 +40,6 @@ export class WorkspaceManager {
 
   register(dir: string): RepoRegistration {
     const repoPath = gitRoot(dir);
-    const existing = this.store.getRepoByPath(repoPath);
-    if (existing) {
-      return existing;
-    }
     return this.store.upsertRepo({
       path: repoPath,
       baseCommit: git(repoPath, ["rev-parse", "HEAD"]),

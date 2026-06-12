@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("WorkspaceManager", () => {
-  test("registers a pinned repo and creates an isolated branched agent workspace", async () => {
+  test("registers a repo and creates an isolated branched agent workspace", async () => {
     const root = tempRoot();
     const source = join(root, "source");
     const runs = join(root, "runs");
@@ -76,6 +76,40 @@ describe("WorkspaceManager", () => {
     });
 
     await waitFor(() => existsSync(join(done, agent.id)));
+
+    store.close();
+  });
+
+  test("creates from the latest source HEAD while preserving dirty working tree state", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const firstBase = workspace.register(source).baseCommit;
+    writeFileSync(join(source, "README.md"), "# test\n\ncommitted update\n");
+    git(source, ["add", "README.md"]);
+    git(source, ["commit", "-m", "update readme"]);
+    const latestBase = git(source, ["rev-parse", "HEAD"]);
+    expect(latestBase).not.toBe(firstBase);
+    writeFileSync(join(source, "README.md"), "# test\n\ncommitted update\n\nlocal edit\n");
+    writeFileSync(join(source, "scratch.txt"), "local scratch\n");
+
+    const agents = await workspace.create(source, {
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+
+    const agent = agents[0]!;
+    expect(agent.baseCommit).toBe(latestBase);
+    expect(git(agent.cwd, ["rev-parse", "HEAD"])).toBe(latestBase);
+    expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
+    expect(readFileSync(join(agent.cwd, "README.md"), "utf8")).toContain("local edit");
+    expect(readFileSync(join(agent.cwd, "scratch.txt"), "utf8")).toBe("local scratch\n");
 
     store.close();
   });

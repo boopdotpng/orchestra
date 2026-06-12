@@ -237,7 +237,9 @@ export class OrchestraStore {
       .query(
         `INSERT INTO repos (path, base_commit, base_branch, created_at)
          VALUES (?, ?, ?, ?)
-         ON CONFLICT(path) DO UPDATE SET path = excluded.path
+         ON CONFLICT(path) DO UPDATE SET
+          base_commit = excluded.base_commit,
+          base_branch = excluded.base_branch
         `,
       )
       .run(input.path, input.baseCommit, input.baseBranch, createdAt);
