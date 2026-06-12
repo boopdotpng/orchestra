@@ -104,6 +104,14 @@
   .repo-label.sel { background: #14202f; border-color: #1d3a5f; }
   .repo-label .dirname { color: var(--text); }
   .repo-label .count { color: var(--text-faint); font-weight: 400; }
+  .repo-label .tw {
+    display: inline-flex; align-items: center; align-self: center; flex-shrink: 0;
+    color: var(--text-faint); border-radius: 5px; padding: 2px; margin: -2px 0 -2px -4px;
+  }
+  .repo-label .tw:hover { color: var(--text); background: var(--bg-elev2); }
+  .repo-label .tw svg { transition: transform .12s ease; }
+  .repo.collapsed .repo-label .tw svg { transform: rotate(-90deg); }
+  .repo.collapsed .repo-body { display: none; }
 
   .arow {
     display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 9px;
@@ -481,9 +489,27 @@ const state = {
   detailLoading: null,
   detailPending: {},
   filters: { reasoning: true, tools: true, events: true },
+  collapsed: loadCollapsed(), // Set of workspace keys collapsed in the sidebar
   _nodeMap: null,      // mid -> { node, text, kind } for incremental convo render
 };
 let msgSeq = 0;
+
+// ---------- sidebar collapse ----------
+const COLLAPSE_LS_KEY = "orchestra.collapsedWorkspaces";
+const CHEVRON_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+function loadCollapsed() {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSE_LS_KEY) || "[]");
+    return new Set(Array.isArray(v) ? v : []);
+  } catch { return new Set(); }
+}
+function toggleRepoCollapsed(key) {
+  if (state.collapsed.has(key)) state.collapsed.delete(key);
+  else state.collapsed.add(key);
+  try { localStorage.setItem(COLLAPSE_LS_KEY, JSON.stringify([...state.collapsed])); } catch {}
+  const tw = document.querySelector(`.repo-label .tw[data-tw="${CSS.escape(key)}"]`);
+  if (tw) tw.closest(".repo").classList.toggle("collapsed", state.collapsed.has(key));
+}
 
 // ---------- net ----------
 async function api(path, opts = {}) {
@@ -630,14 +656,15 @@ function renderSidebar() {
   for (const [repo, agents] of [...byRepo.entries()].sort((x, y) => workspaceMeta(x[0]).name.localeCompare(workspaceMeta(y[0]).name))) {
     const meta = workspaceMeta(repo);
     agents.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0));
-    html += `<div class="repo">
-      <div class="repo-label ${repo === state.repoView ? "sel" : ""}" data-repo="${esc(repo)}" title="${esc(meta.path)} — open workspace view"><span class="dirname">${esc(meta.name)}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
-      ${agents.map(rowHtml).join("")}
+    html += `<div class="repo ${state.collapsed.has(repo) ? "collapsed" : ""}">
+      <div class="repo-label ${repo === state.repoView ? "sel" : ""}" data-repo="${esc(repo)}" title="${esc(meta.path)} — open workspace view"><span class="tw" data-tw="${esc(repo)}" title="Collapse / expand">${CHEVRON_SVG}</span><span class="dirname">${esc(meta.name)}</span><span class="count">${agents.length} agent${agents.length === 1 ? "" : "s"}</span></div>
+      <div class="repo-body">${agents.map(rowHtml).join("")}</div>
     </div>`;
   }
   list.innerHTML = html;
   list.querySelectorAll(".arow").forEach((r) => r.addEventListener("click", () => openAgent(r.dataset.id)));
   list.querySelectorAll(".repo-label").forEach((r) => r.addEventListener("click", () => openRepo(r.dataset.repo)));
+  list.querySelectorAll(".repo-label .tw").forEach((t) => t.addEventListener("click", (e) => { e.stopPropagation(); toggleRepoCollapsed(t.dataset.tw); }));
 }
 
 function rowHtml(a) {
