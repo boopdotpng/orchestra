@@ -68,9 +68,9 @@ server.tool(
 
 server.tool(
   "teardown",
-  "Destroy Orchestra-managed agents and their workspaces. Pass a 4-character agent id, repo folder name, source workdir path, or the literal target 'all' to remove every managed agent.",
-  { target: z.string().describe("Agent id, repo folder name, source workdir path, or literal 'all'.") },
-  async ({ target }) => text(await post("/teardown", { target })),
+  "Destroy Orchestra-managed agents and their workspaces for an exact workspace/run name.",
+  { workspace: z.string().min(1).describe("Required exact workspace/run name to remove.") },
+  async ({ workspace }) => text(await post("/teardown", { workspace })),
 );
 
 server.tool(

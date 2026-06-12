@@ -50,7 +50,7 @@ export class OrchestraClient {
     return this.post("/repos/teardown", input);
   }
 
-  teardownTarget(input: TeardownRequest): Promise<TeardownRepoResponse> {
+  teardownWorkspace(input: TeardownRequest): Promise<TeardownRepoResponse> {
     return this.post("/teardown", input);
   }
 

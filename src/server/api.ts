@@ -16,7 +16,7 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "GET", path: "/events", description: "Server-sent event stream for live agent events." },
   { method: "POST", path: "/repos/register", description: "Register a source repository." },
   { method: "POST", path: "/repos/teardown", description: "Remove managed agents and workspaces for a source repository." },
-  { method: "POST", path: "/teardown", description: "Remove one agent, all agents, or all agents for a repo name or workdir." },
+  { method: "POST", path: "/teardown", description: "Remove all agents for a workspace name." },
   { method: "POST", path: "/diff", description: "Read one agent diff or compare multiple agent diffs." },
   { method: "GET", path: "/standouts", description: "Show mechanical standout markers across managed agents." },
   { method: "GET", path: "/agents", description: "List managed agents." },
@@ -88,7 +88,7 @@ export type TeardownRepoRequest = {
 };
 
 export type TeardownRequest = {
-  target: string;
+  workspace: string;
 };
 
 export type TeardownRepoResponse = {

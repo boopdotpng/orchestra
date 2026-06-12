@@ -141,7 +141,7 @@ The MCP server talks to the local Orchestra HTTP service, so the systemd service
 MCP tools:
 
 - `register`: pin a source repo base commit.
-- `teardown`: remove Orchestra-managed agents and workspaces by agent id, repo folder name, source workdir, or `all`.
+- `teardown`: remove Orchestra-managed agents and workspaces by exact workspace/run name.
 - `create`: create one or more isolated agent workspaces under a required workspace name. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `workspaceName`, `repoPath`, `baseCommit`, `sourcePath`, optional `parentAgentId`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
 - `ls`: list managed agents.
 - `status`: show agents and pending approvals.
@@ -201,13 +201,10 @@ Prints enriched status for all managed agents, including last assistant tail, tu
 The table stays compact and prints recent assistant output below it, so long summaries do not stretch every row.
 
 ```bash
-orchestra teardown <id>
-orchestra teardown <repo-name>
-orchestra teardown <workdir>
-orchestra teardown all
+orchestra teardown <workspace-name>
 ```
 
-Destroys one agent by id, all agents for a source workdir, or every managed agent.
+Destroys all agents in the exact workspace/run name. To remove a single agent, use `orchestra remove <id>`.
 
 ```bash
 orchestra steer <id> "run tests and fix failures"

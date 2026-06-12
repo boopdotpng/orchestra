@@ -189,9 +189,8 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
       return;
     }
     case "teardown": {
-      const target = required(args.positionals[0], "target");
-      const resolved = target === "all" || /^[0-9a-f]{4}$/i.test(target) || !isPathLikeTarget(target) ? target : expandHome(target);
-      const { agents } = await client.teardownTarget({ target: resolved });
+      const workspaceName = required(args.positionals[0], "workspace name");
+      const { agents } = await client.teardownWorkspace({ workspace: workspaceName });
       printRemovedAgents(agents);
       return;
     }
@@ -249,8 +248,8 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
 }
 
 async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
-  const target = required(args.positionals[0], "target");
-  const agents = await workspace.teardownTarget(target);
+  const workspaceName = required(args.positionals[0], "workspace name");
+  const agents = await workspace.teardownWorkspace(workspaceName);
   printRemovedAgents(agents);
 }
 
@@ -687,19 +686,6 @@ function promptFrom(args: ParsedArgs): string {
     throw new Error("run requires a prompt");
   }
   return prompt;
-}
-
-function isPathLikeTarget(target: string): boolean {
-  return (
-    target === "." ||
-    target === ".." ||
-    target === "~" ||
-    target.startsWith("./") ||
-    target.startsWith("../") ||
-    target.startsWith("~/") ||
-    target.startsWith("/") ||
-    target.includes("/")
-  );
 }
 
 function printApprovals(approvals: Approval[]): void {
@@ -1169,7 +1155,7 @@ function printHelp(): void {
 Usage:
   orchestra create <name> <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
   orchestra status [workspace-name|--workspace NAME]
-  orchestra teardown <id|repo-name|workdir|all>
+  orchestra teardown <workspace-name>
   orchestra remove <id>
   orchestra ls
   orchestra standouts

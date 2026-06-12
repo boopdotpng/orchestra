@@ -107,7 +107,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "POST" && url.pathname === "/teardown") {
     const body = await readBody(request);
-    return jsonResponse({ agents: await deps.workspace.teardownTarget(requiredString(body.target, "target")) });
+    return jsonResponse({ agents: await deps.workspace.teardownWorkspace(requiredString(body.workspace, "workspace")) });
   }
 
   if (request.method === "POST" && url.pathname === "/diff") {

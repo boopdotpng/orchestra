@@ -72,31 +72,31 @@ describe("orchestra CLI daemon routing", () => {
     expect(steer?.body).toEqual({ input: "focus on tests", model: "gpt-5.5" });
   });
 
-  test("routes teardown of one agent id through the orchestra server", async () => {
+  test("routes teardown of a workspace name through the orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/repo/ab12" }] },
     });
 
-    const proc = await runCli(["teardown", "ab12", "--url", baseUrl]);
+    const proc = await runCli(["teardown", "blackhole-py", "--url", baseUrl]);
     expect(proc.exitCode).toBe(0);
     expect(proc.stdout).toContain("removed 1 agent");
     expect(proc.stdout).toContain("ab12");
     expect(proc.stdout).toContain("/tmp/runs/repo/ab12");
     const teardown = requests.find((request) => request.path === "/teardown");
-    expect(teardown?.body).toEqual({ target: "ab12" });
+    expect(teardown?.body).toEqual({ workspace: "blackhole-py" });
   });
 
-  test("routes teardown of a bare repo name without resolving it as a path", async () => {
+  test("routes teardown of a workspace name with spaces", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/bh-tournament/ab12" }] },
     });
 
-    const proc = await runCli(["teardown", "bh-tournament", "--url", baseUrl]);
+    const proc = await runCli(["teardown", "focused pass", "--url", baseUrl]);
     expect(proc.exitCode).toBe(0);
     const teardown = requests.find((request) => request.path === "/teardown");
-    expect(teardown?.body).toEqual({ target: "bh-tournament" });
+    expect(teardown?.body).toEqual({ workspace: "focused pass" });
   });
 
   test("prints the server error message on failure", async () => {

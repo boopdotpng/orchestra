@@ -256,6 +256,18 @@ export class WorkspaceManager {
     return this.teardownRepo(repo);
   }
 
+  async teardownWorkspace(workspaceName: string): Promise<ManagedAgent[]> {
+    const trimmed = workspaceName.trim();
+    if (!trimmed) {
+      throw new Error("workspace name is required");
+    }
+    const agents = this.store.listManagedAgents().filter((agent) => sameWorkspaceName(agent.workspaceName, trimmed));
+    for (const agent of agents) {
+      await this.remove(agent.id);
+    }
+    return agents;
+  }
+
   async teardownTarget(target: string): Promise<ManagedAgent[]> {
     const trimmed = target.trim();
     if (trimmed === "all") {

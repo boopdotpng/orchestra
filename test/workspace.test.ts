@@ -358,6 +358,38 @@ describe("WorkspaceManager", () => {
 
     store.close();
   });
+
+  test("tears down only agents with the matching workspace name", async () => {
+    const root = tempRoot();
+    const source = join(root, "blackhole-py");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const target = await workspace.create(source, {
+      workspaceName: "blackhole-py",
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    const other = await workspace.create(source, {
+      workspaceName: "trace work",
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+
+    const removed = await workspace.teardownWorkspace("BLACKHOLE-PY");
+
+    expect(removed.map((candidate) => candidate.id)).toEqual(target.map((agent) => agent.id));
+    expect(store.getManagedAgent(target[0]!.id)).toBeUndefined();
+    expect(store.getManagedAgent(other[0]!.id)).toBeDefined();
+    expect(existsSync(target[0]!.cwd)).toBe(false);
+    expect(existsSync(other[0]!.cwd)).toBe(true);
+
+    store.close();
+  });
 });
 
 class FakeBackend implements CodexBackend {
