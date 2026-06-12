@@ -67,6 +67,17 @@ server.tool(
 );
 
 server.tool(
+  "list_workspaces",
+  [
+    "List Orchestra workspaces with full, untruncated workspace names.",
+    "Use this before workspace-scoped tools such as status, standouts, broadcast, or teardown when you need the exact workspace/run name.",
+    "Returns each workspace name with agent ids, status counts, repo paths, and workdirs.",
+  ].join(" "),
+  {},
+  async () => text(listWorkspaces(await get("/status"))),
+);
+
+server.tool(
   "teardown",
   "Destroy Orchestra-managed agents and their workspaces for an exact workspace/run name.",
   { workspace: z.string().min(1).describe("Required exact workspace/run name to remove.") },
@@ -141,4 +152,70 @@ function text(value: unknown) {
   return {
     content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
   };
+}
+
+type WorkspaceListing = {
+  name: string;
+  agentCount: number;
+  agentIds: string[];
+  statuses: Record<string, number>;
+  repoPaths: string[];
+  workdirs: string[];
+};
+
+function listWorkspaces(status: unknown): { workspaces: WorkspaceListing[] } {
+  const data = asRecord(status);
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  const byName = new Map<string, WorkspaceListing>();
+
+  for (const value of agents) {
+    const agent = asRecord(value);
+    const name = readString(agent, "workspaceName") ?? readString(agent, "workspace");
+    if (!name) {
+      continue;
+    }
+
+    const listing =
+      byName.get(name) ??
+      ({
+        name,
+        agentCount: 0,
+        agentIds: [],
+        statuses: {},
+        repoPaths: [],
+        workdirs: [],
+      } satisfies WorkspaceListing);
+    listing.agentCount += 1;
+
+    const id = readString(agent, "id");
+    if (id) {
+      listing.agentIds.push(id);
+    }
+    const status = readString(agent, "status");
+    if (status) {
+      listing.statuses[status] = (listing.statuses[status] ?? 0) + 1;
+    }
+    appendUnique(listing.repoPaths, readString(agent, "repoPath"));
+    appendUnique(listing.workdirs, readString(agent, "cwd"));
+    byName.set(name, listing);
+  }
+
+  return {
+    workspaces: [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
+
+function appendUnique(values: string[], value: string | undefined): void {
+  if (value && !values.includes(value)) {
+    values.push(value);
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
