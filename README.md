@@ -198,6 +198,8 @@ orchestra status
 
 Prints enriched status for all managed agents, including last assistant tail, turn count, token usage, last activity, and pending approvals.
 
+The table stays compact and prints recent assistant output below it, so long summaries do not stretch every row.
+
 ```bash
 orchestra teardown <id>
 orchestra teardown <repo-name>
@@ -231,6 +233,15 @@ orchestra interrupt <id>
 ```
 
 Interrupts the agent's active turn.
+
+```bash
+orchestra ls
+orchestra remove <id>
+orchestra standouts
+orchestra approvals
+```
+
+Lists managed agents, removes one agent, prints mechanical standout signals, or lists pending approvals.
 
 ```bash
 orchestra monitor <id>
@@ -284,11 +295,10 @@ orchestra thread-interrupt THREAD_ID [TURN_ID]
 Reads, steers, or interrupts app-server threads directly.
 
 ```bash
-orchestra approvals
 orchestra models
 ```
 
-Lists pending approvals stored by Orchestra, or lists available Codex models and service tiers.
+Lists available Codex models and service tiers.
 
 ## Development
 
