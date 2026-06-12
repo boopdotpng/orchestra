@@ -56,6 +56,7 @@ export type CreateAgentsRequest = {
   name: string;
   dir: string;
   count?: number;
+  concurrency?: number;
   prompt?: string;
   sharedPrompt?: string;
   promptTemplate?: string;

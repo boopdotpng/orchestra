@@ -76,12 +76,40 @@ describe("WorkspaceManager", () => {
 
     expect(agents).toHaveLength(2);
     expect(agents.every((agent) => agent.workspaceName === "focused pass")).toBe(true);
-    expect(backend.startedTurns[0]?.input).toBe(
+    const turnsByThread = new Map(backend.startedTurns.map((turn) => [turn.threadId, turn.input]));
+    expect(turnsByThread.get(agents[0]!.threadId)).toBe(
       `Shared context\n\nAgent 1/2\nWorkspace focused pass\nBranch orchestra/${agents[0]!.id}\nCWD ${agents[0]!.cwd}\nFocus: Fix reg 4`,
     );
-    expect(backend.startedTurns[1]?.input).toBe(
+    expect(turnsByThread.get(agents[1]!.threadId)).toBe(
       `Shared context\n\nAgent 2/2\nWorkspace focused pass\nBranch orchestra/${agents[1]!.id}\nCWD ${agents[1]!.cwd}\nFocus: Add tracepoints`,
     );
+
+    store.close();
+  });
+
+  test("creates multiple agents with bounded concurrency", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    backend.startThreadDelayMs = 30;
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      workspaceName: "parallel create",
+      runsRoot: runs,
+      count: 4,
+      concurrency: 2,
+      prompt: "hello agent",
+    });
+
+    expect(agents).toHaveLength(4);
+    expect(new Set(agents.map((agent) => agent.id)).size).toBe(4);
+    expect(backend.maxConcurrentStartThreads).toBe(2);
+    expect(agents.every((agent) => existsSync(agent.cwd))).toBe(true);
 
     store.close();
   });
@@ -405,6 +433,9 @@ class FakeBackend implements CodexBackend {
   }> = [];
   threadNames: Array<{ threadId: string; name: string }> = [];
   startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
+  startThreadDelayMs = 0;
+  private concurrentStartThreads = 0;
+  maxConcurrentStartThreads = 0;
   private threadCount = 0;
 
   async connect() {}
@@ -426,17 +457,26 @@ class FakeBackend implements CodexBackend {
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
   }) {
-    this.threadCount += 1;
-    this.startedThreads.push(options);
-    return {
-      thread: {
-        id: `thread-${this.threadCount}`,
-        sessionId: `session-${this.threadCount}`,
-        cwd: options.cwd ?? "",
-        preview: "",
-        status: { type: "idle" },
-      },
-    };
+    this.concurrentStartThreads += 1;
+    this.maxConcurrentStartThreads = Math.max(this.maxConcurrentStartThreads, this.concurrentStartThreads);
+    try {
+      if (this.startThreadDelayMs > 0) {
+        await Bun.sleep(this.startThreadDelayMs);
+      }
+      this.threadCount += 1;
+      this.startedThreads.push(options);
+      return {
+        thread: {
+          id: `thread-${this.threadCount}`,
+          sessionId: `session-${this.threadCount}`,
+          cwd: options.cwd ?? "",
+          preview: "",
+          status: { type: "idle" },
+        },
+      };
+    } finally {
+      this.concurrentStartThreads -= 1;
+    }
   }
   async resumeThread() {
     return {};

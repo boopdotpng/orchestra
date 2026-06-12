@@ -18,6 +18,7 @@ export type WorkspaceManagerOptions = {
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
   workspaceName: string;
   count?: number | undefined;
+  concurrency?: number | undefined;
   prompt?: string | undefined;
   sharedPrompt?: string | undefined;
   promptTemplate?: string | undefined;
@@ -93,12 +94,17 @@ export class WorkspaceManager {
     }
     const source = this.resolveCreateSource(dir);
     const prompts = resolveAgentPrompts(options);
-    const agents: ManagedAgent[] = [];
-    for (const prompt of prompts) {
-      const agent = await this.createOne(source, { ...options, workspaceName }, prompt);
-      agents.push(agent);
-    }
-    return agents;
+    const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
+    const repoRunsRoot = join(runsRoot, basename(source.repo.path));
+    const reservedIds = new Set(this.store.listManagedAgents().map((agent) => agent.id));
+    const tasks = prompts.map((prompt) => {
+      const id = uniqueAgentId((candidate) => !reservedIds.has(candidate) && !existsSync(join(repoRunsRoot, candidate)));
+      reservedIds.add(id);
+      return { id, prompt };
+    });
+    return mapWithConcurrency(tasks, resolveCreateConcurrency(options.concurrency, tasks.length), (task) =>
+      this.createOne(source, { ...options, workspaceName }, task.prompt, task.id),
+    );
   }
 
   async steer(id: string, input: string, options: WorkspaceManagerOptions = {}) {
@@ -357,14 +363,13 @@ export class WorkspaceManager {
       .sort((left, right) => right.cwd.length - left.cwd.length)[0];
   }
 
-  private async createOne(source: CreateSource, options: CreateAgentsOptions, promptSpec: ResolvedAgentPrompt): Promise<ManagedAgent> {
-    const id = uniqueAgentId((candidate) => !this.store.getManagedAgent(candidate));
+  private async createOne(source: CreateSource, options: CreateAgentsOptions, promptSpec: ResolvedAgentPrompt, id: string): Promise<ManagedAgent> {
     const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
     const cwd = join(runsRoot, basename(source.repo.path), id);
     mkdirSync(dirname(cwd), { recursive: true });
-    copyReflink(source.sourcePath, cwd);
-    git(cwd, ["switch", "-c", `orchestra/${id}`, source.baseCommit]);
-    const orchestraBaseCommit = createOrchestraBaseCommit(cwd);
+    await copyReflink(source.sourcePath, cwd);
+    await asyncGit(cwd, ["switch", "-c", `orchestra/${id}`, source.baseCommit]);
+    const orchestraBaseCommit = await createOrchestraBaseCommit(cwd);
 
     const thread = await this.manager.startAgent({
       cwd,
@@ -537,7 +542,7 @@ function gitPath(cwd: string, path: string): string {
   return isAbsolute(value) ? value : join(cwd, value);
 }
 
-function createOrchestraBaseCommit(cwd: string): string {
+async function createOrchestraBaseCommit(cwd: string): Promise<string> {
   const env = {
     ...process.env,
     GIT_AUTHOR_NAME: "Orchestra",
@@ -547,9 +552,9 @@ function createOrchestraBaseCommit(cwd: string): string {
     GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
     GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
   };
-  git(cwd, ["add", "-A"], { env });
-  git(cwd, ["commit", "--allow-empty", "--no-gpg-sign", "-m", "orchestra base commit"], { env });
-  return git(cwd, ["rev-parse", "HEAD"]);
+  await asyncGit(cwd, ["add", "-A"], { env });
+  await asyncGit(cwd, ["commit", "--allow-empty", "--no-gpg-sign", "-m", "orchestra base commit"], { env });
+  return asyncGit(cwd, ["rev-parse", "HEAD"]);
 }
 
 function parseNumstatCount(value: string | undefined): number {
@@ -645,18 +650,91 @@ function formatTimestamp(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-function copyReflink(source: string, dest: string): void {
+async function copyReflink(source: string, dest: string): Promise<void> {
   if (existsSync(dest)) {
     throw new Error(`workspace already exists: ${dest}`);
   }
   const args = ["-a", "--reflink=auto", `${source}/.`, dest];
-  let proc = Bun.spawnSync(["cp", ...args], { stdout: "pipe", stderr: "pipe" });
-  if (proc.exitCode !== 0) {
-    proc = Bun.spawnSync(["cp", "-a", `${source}/.`, dest], { stdout: "pipe", stderr: "pipe" });
+  let result = await run(["cp", ...args], { allowFailure: true });
+  if (result.exitCode !== 0) {
+    result = await run(["cp", "-a", `${source}/.`, dest], { allowFailure: true });
   }
-  if (proc.exitCode !== 0) {
-    throw new Error(proc.stderr.toString().trim() || `failed to copy ${source}`);
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `failed to copy ${source}`);
   }
+}
+
+async function asyncGit(cwd: string, args: string[], options: { allowFailure?: boolean; trim?: boolean; env?: Record<string, string | undefined> } = {}): Promise<string> {
+  const runOptions: { cwd: string; env?: Record<string, string | undefined>; allowFailure?: boolean } = { cwd };
+  if (options.env !== undefined) {
+    runOptions.env = options.env;
+  }
+  if (options.allowFailure !== undefined) {
+    runOptions.allowFailure = options.allowFailure;
+  }
+  const result = await run(["git", ...args], runOptions);
+  const output = options.trim === false ? result.stdout : result.stdout.trim();
+  if (result.exitCode !== 0 && !options.allowFailure) {
+    throw new Error(result.stderr.trim() || `git ${args.join(" ")} failed`);
+  }
+  return result.exitCode === 0 ? output : `${output}${result.stderr}`;
+}
+
+async function run(
+  cmd: string[],
+  options: { cwd?: string | undefined; env?: Record<string, string | undefined>; allowFailure?: boolean } = {},
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const spawnOptions: { cwd?: string; stdout: "pipe"; stderr: "pipe"; env?: Record<string, string | undefined> } = {
+    stdout: "pipe",
+    stderr: "pipe",
+  };
+  if (options.cwd !== undefined) {
+    spawnOptions.cwd = options.cwd;
+  }
+  if (options.env !== undefined) {
+    spawnOptions.env = options.env;
+  }
+  const proc = Bun.spawn(cmd, spawnOptions);
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  if (exitCode !== 0 && !options.allowFailure) {
+    throw new Error(stderr.trim() || `${cmd.join(" ")} failed`);
+  }
+  return { exitCode, stdout, stderr };
+}
+
+async function mapWithConcurrency<T, U>(values: T[], concurrency: number, mapper: (value: T, index: number) => Promise<U>): Promise<U[]> {
+  const results = new Array<U>(values.length);
+  let next = 0;
+  const workerCount = Math.min(concurrency, values.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = next;
+        next += 1;
+        if (index >= values.length) {
+          return;
+        }
+        results[index] = await mapper(values[index]!, index);
+      }
+    }),
+  );
+  return results;
+}
+
+function resolveCreateConcurrency(value: number | undefined, count: number): number {
+  const raw = value ?? numberFromEnv(process.env.ORCHESTRA_CREATE_CONCURRENCY) ?? 8;
+  if (!Number.isFinite(raw) || raw < 1) {
+    throw new Error("concurrency must be a positive number");
+  }
+  return Math.min(Math.floor(raw), Math.max(count, 1));
+}
+
+function numberFromEnv(value: string | undefined): number | undefined {
+  if (value === undefined || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function uniqueAgentId(isAvailable: (id: string) => boolean): string {

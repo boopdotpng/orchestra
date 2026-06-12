@@ -121,10 +121,9 @@ describe("Orchestra HTTP handler", () => {
     const created = (await createResponse.json()) as { agents: Array<{ id: string; workspaceName: string }> };
     expect(created.agents).toHaveLength(2);
     expect(created.agents.map((agent) => agent.workspaceName)).toEqual(["focused pass", "focused pass"]);
-    expect(backend.startedTurns.map((turn) => turn.input)).toEqual([
-      "Second focused pass\n\nFocus:\nFix reg 4",
-      "Second focused pass\n\nFocus:\nAdd tracepoints",
-    ]);
+    expect(backend.startedTurns.map((turn) => turn.input).sort()).toEqual(
+      ["Second focused pass\n\nFocus:\nAdd tracepoints", "Second focused pass\n\nFocus:\nFix reg 4"].sort(),
+    );
 
     store.close();
   });
@@ -359,6 +358,7 @@ class FakeBackend implements CodexBackend {
   requests = new EventBus<BackendServerRequest>();
   startedTurns: Array<{ threadId: string; input: string }> = [];
   private threadCount = 0;
+  private turnCount = 0;
 
   async connect() {}
   async close() {}
@@ -405,8 +405,9 @@ class FakeBackend implements CodexBackend {
     return {};
   }
   async startTurn(threadId: string, input: string) {
+    this.turnCount += 1;
     this.startedTurns.push({ threadId, input });
-    return { turn: { id: "turn-1", status: "inProgress" } };
+    return { turn: { id: `turn-${this.turnCount}`, status: "inProgress" } };
   }
   async steerTurn() {
     return {};

@@ -129,6 +129,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
       workspaceName: name,
       count: typeof body.count === "number" ? body.count : undefined,
+      concurrency: typeof body.concurrency === "number" ? body.concurrency : undefined,
       prompt: typeof body.prompt === "string" ? body.prompt : undefined,
       sharedPrompt: typeof body.sharedPrompt === "string" ? body.sharedPrompt : typeof body.shared_prompt === "string" ? body.shared_prompt : undefined,
       promptTemplate: typeof body.promptTemplate === "string" ? body.promptTemplate : typeof body.prompt_template === "string" ? body.prompt_template : undefined,

@@ -20,6 +20,7 @@ server.tool(
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
     "Either provide prompt with optional n, or provide sharedPrompt with agents[{focus}] to start focused agents in one call.",
     "create always starts the first turn so no dead idle agents are created.",
+    "Concurrent setup is bounded by concurrency, or ORCHESTRA_CREATE_CONCURRENCY when omitted, defaulting to 8.",
     `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
     "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
   ].join(" "),
@@ -27,6 +28,12 @@ server.tool(
     name: z.string().min(1).describe("Required workspace/run name used to group these agents in the UI and status output."),
     dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
     n: z.number().int().positive().optional().describe("Number of agents to create when using prompt. Values greater than 1 fan out and return multiple ids in agents[]."),
+    concurrency: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Maximum number of agents to set up and start at once. Omit to use ORCHESTRA_CREATE_CONCURRENCY or the built-in default of 8."),
     prompt: z.string().min(1).optional().describe("First-turn prompt used for every created agent. Mutually exclusive with agents."),
     sharedPrompt: z.string().min(1).optional().describe("Shared instructions used with agents[{focus}] focused fan-out."),
     promptTemplate: z
@@ -49,8 +56,8 @@ server.tool(
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
   },
-  async ({ name, dir, n, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
-    text(await post("/agents", { name, dir, count: n, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
+  async ({ name, dir, n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
+    text(await post("/agents", { name, dir, count: n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
 );
 
 server.tool(
