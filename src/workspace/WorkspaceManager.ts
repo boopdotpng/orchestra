@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentManager } from "../manager/AgentManager";
 import { DEFAULT_MODEL, DEFAULT_SERVICE_TIER } from "../config";
@@ -19,6 +19,14 @@ export type CreateAgentsOptions = WorkspaceManagerOptions & {
   count?: number | undefined;
   prompt: string;
   onComplete?: string | undefined;
+};
+
+type AgentDiffStats = {
+  id: string;
+  additions: number;
+  deletions: number;
+  files: string[];
+  surfaces: string[];
 };
 
 type CreateSource = {
@@ -88,8 +96,74 @@ export class WorkspaceManager {
 
   diff(id: string): string {
     const agent = this.requiredAgent(id);
-    const baseCommit = agent.baseCommit ?? git(agent.cwd, ["merge-base", "HEAD", agent.branch]);
-    return git(agent.cwd, ["diff", `${baseCommit}..HEAD`], { allowFailure: true });
+    return this.withDiffIndex(agent.cwd, (env) => {
+      const baseCommit = agent.baseCommit ?? git(agent.cwd, ["merge-base", "HEAD", agent.branch]);
+      return git(agent.cwd, ["diff", baseCommit], { allowFailure: true, env });
+    });
+  }
+
+  diffAgents(ids: string[]): string {
+    const normalized = ids.map((id) => id.trim().toLowerCase()).filter(Boolean);
+    if (normalized.length === 0) {
+      throw new Error("at least one agent id is required");
+    }
+    if (normalized.length === 1) {
+      return this.diff(normalized[0]!);
+    }
+
+    const stats = normalized.map((id) => this.diffStats(id));
+    const fileOwners = new Map<string, string[]>();
+    for (const agent of stats) {
+      for (const file of agent.files) {
+        const owners = fileOwners.get(file) ?? [];
+        owners.push(agent.id);
+        fileOwners.set(file, owners);
+      }
+    }
+    const overlaps = [...fileOwners.entries()]
+      .filter(([, owners]) => owners.length > 1)
+      .sort(([left], [right]) => left.localeCompare(right));
+
+    return [
+      `Compared ${stats.length} agents against their Orchestra baselines.`,
+      "",
+      "summary:",
+      ...stats.map((agent) => `  ${agent.id}: +${agent.additions} -${agent.deletions}, ${plural(agent.files.length, "file")}, ${surfaceSummary(agent.surfaces)}`),
+      "",
+      "changed file overlap:",
+      ...(overlaps.length ? overlaps.map(([file, owners]) => `  ${file}: ${owners.join(", ")}`) : ["  none"]),
+      "",
+      "unique files:",
+      ...stats.flatMap((agent) => {
+        const unique = agent.files.filter((file) => fileOwners.get(file)?.length === 1);
+        return [`  ${agent.id}:`, ...(unique.length ? unique.map((file) => `    ${file}`) : ["    none"])];
+      }),
+    ].join("\n");
+  }
+
+  standouts(): string {
+    const summaries = this.store.listManagedAgentSummaries();
+    const stats = summaries.map((agent) => ({ agent, stats: this.diffStats(agent.id) }));
+    const byCodeWritten = [...stats].sort((left, right) => right.stats.additions - left.stats.additions || left.agent.id.localeCompare(right.agent.id));
+    const finished = [...stats]
+      .filter(({ agent }) => agent.status === "idle" || agent.status === "error")
+      .sort((left, right) => (right.agent.lastActivityAt ?? right.agent.createdAt * 1000) - (left.agent.lastActivityAt ?? left.agent.createdAt * 1000));
+    const bySurface = [...stats].sort(
+      (left, right) => right.stats.surfaces.length - left.stats.surfaces.length || right.stats.files.length - left.stats.files.length || left.agent.id.localeCompare(right.agent.id),
+    );
+
+    return [
+      "Standouts are mechanical signals, not quality scores.",
+      "",
+      "most code written:",
+      ...top3(byCodeWritten).map(({ stats }) => `  ${stats.id}: +${stats.additions} -${stats.deletions}, ${plural(stats.files.length, "file")}`),
+      "",
+      "finished last:",
+      ...(finished.length ? top3(finished).map(({ agent }) => `  ${agent.id}: ${agent.status}, ${formatTimestamp(agent.lastActivityAt ?? agent.createdAt * 1000)}`) : ["  none"]),
+      "",
+      "broadest surface area:",
+      ...top3(bySurface).map(({ stats }) => `  ${stats.id}: ${plural(stats.surfaces.length, "surface")}, ${surfaceSummary(stats.surfaces)}`),
+    ].join("\n");
   }
 
   exec(id: string, command: string): { exitCode: number; output: string } {
@@ -245,6 +319,7 @@ export class WorkspaceManager {
     mkdirSync(dirname(cwd), { recursive: true });
     copyReflink(source.sourcePath, cwd);
     git(cwd, ["switch", "-c", `orchestra/${id}`, source.baseCommit]);
+    const orchestraBaseCommit = createOrchestraBaseCommit(cwd);
 
     const thread = await this.manager.startAgent({
       cwd,
@@ -258,7 +333,7 @@ export class WorkspaceManager {
       id,
       repoId: source.repo.id,
       repoPath: source.repo.path,
-      baseCommit: source.baseCommit,
+      baseCommit: orchestraBaseCommit,
       sourcePath: source.sourcePath,
       parentAgentId: source.parentAgentId,
       cwd,
@@ -314,6 +389,56 @@ export class WorkspaceManager {
       stderr: "ignore",
     }).exited.catch(() => undefined);
   }
+
+  private diffStats(id: string): AgentDiffStats {
+    const agent = this.requiredAgent(id);
+    return this.withDiffIndex(agent.cwd, (env) => {
+      const baseCommit = agent.baseCommit ?? git(agent.cwd, ["merge-base", "HEAD", agent.branch]);
+      const output = git(agent.cwd, ["diff", "--numstat", baseCommit], { allowFailure: true, env });
+      const files: string[] = [];
+      let additions = 0;
+      let deletions = 0;
+      for (const line of output.split("\n").filter(Boolean)) {
+        const [added, deleted, ...pathParts] = line.split("\t");
+        const path = pathParts.join("\t");
+        if (!path) {
+          continue;
+        }
+        files.push(path);
+        additions += parseNumstatCount(added);
+        deletions += parseNumstatCount(deleted);
+      }
+      return {
+        id: agent.id,
+        additions,
+        deletions,
+        files: files.sort((left, right) => left.localeCompare(right)),
+        surfaces: [...new Set(files.map(surfaceForFile))].sort((left, right) => left.localeCompare(right)),
+      };
+    });
+  }
+
+  private withDiffIndex<T>(cwd: string, callback: (env: Record<string, string | undefined>) => T): T {
+    const tmp = mkdtempSync(join(tmpdir(), "orchestra-diff-"));
+    const tempIndex = join(tmp, "index");
+    const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+    try {
+      const indexPath = gitPath(cwd, "index");
+      if (existsSync(indexPath)) {
+        copyFileSync(indexPath, tempIndex);
+      } else {
+        git(cwd, ["read-tree", "HEAD"], { env });
+      }
+      const untracked = git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], { trim: false, env });
+      const files = untracked.split("\0").filter(Boolean);
+      if (files.length > 0) {
+        git(cwd, ["add", "-N", "--", ...files], { env });
+      }
+      return callback(env);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 }
 
 export function readPromptFile(path: string): string {
@@ -342,17 +467,67 @@ function isSameOrChildPath(parent: string, child: string): boolean {
   return child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
 }
 
-function git(cwd: string, args: string[], options: { allowFailure?: boolean } = {}): string {
-  const proc = Bun.spawnSync(["git", ...args], {
+function git(cwd: string, args: string[], options: { allowFailure?: boolean; trim?: boolean; env?: Record<string, string | undefined> } = {}): string {
+  const spawnOptions: { cwd: string; stdout: "pipe"; stderr: "pipe"; env?: Record<string, string | undefined> } = {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
-  });
-  const output = proc.stdout.toString().trim();
+  };
+  if (options.env) {
+    spawnOptions.env = options.env;
+  }
+  const proc = Bun.spawnSync(["git", ...args], spawnOptions);
+  const rawOutput = proc.stdout.toString();
+  const output = options.trim === false ? rawOutput : rawOutput.trim();
   if (proc.exitCode !== 0 && !options.allowFailure) {
     throw new Error(proc.stderr.toString().trim() || `git ${args.join(" ")} failed`);
   }
   return proc.exitCode === 0 ? output : `${output}${proc.stderr.toString()}`;
+}
+
+function gitPath(cwd: string, path: string): string {
+  const value = git(cwd, ["rev-parse", "--git-path", path]);
+  return isAbsolute(value) ? value : join(cwd, value);
+}
+
+function createOrchestraBaseCommit(cwd: string): string {
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Orchestra",
+    GIT_AUTHOR_EMAIL: "orchestra@example.invalid",
+    GIT_COMMITTER_NAME: "Orchestra",
+    GIT_COMMITTER_EMAIL: "orchestra@example.invalid",
+    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+    GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  };
+  git(cwd, ["add", "-A"], { env });
+  git(cwd, ["commit", "--allow-empty", "--no-gpg-sign", "-m", "orchestra base commit"], { env });
+  return git(cwd, ["rev-parse", "HEAD"]);
+}
+
+function parseNumstatCount(value: string | undefined): number {
+  return value && /^\d+$/.test(value) ? Number(value) : 0;
+}
+
+function surfaceForFile(path: string): string {
+  const [first, second] = path.split("/");
+  return second ? `${first}/` : path;
+}
+
+function surfaceSummary(surfaces: string[]): string {
+  return surfaces.length ? surfaces.join(", ") : "no changed surfaces";
+}
+
+function plural(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function top3<T>(values: T[]): T[] {
+  return values.slice(0, 3);
+}
+
+function formatTimestamp(ms: number): string {
+  return new Date(ms).toISOString();
 }
 
 function copyReflink(source: string, dest: string): void {

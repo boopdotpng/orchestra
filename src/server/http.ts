@@ -108,6 +108,15 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return jsonResponse({ agents: await deps.workspace.teardownTarget(requiredString(body.target, "target")) });
   }
 
+  if (request.method === "POST" && url.pathname === "/diff") {
+    const body = await readBody(request);
+    return textResponse(deps.workspace.diffAgents(agentIds(body)));
+  }
+
+  if (request.method === "GET" && url.pathname === "/standouts") {
+    return textResponse(deps.workspace.standouts());
+  }
+
   if (request.method === "GET" && url.pathname === "/agents") {
     return jsonResponse({ agents: deps.store.listManagedAgents() });
   }
@@ -226,6 +235,22 @@ function requiredString(value: unknown, name: string): string {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+function agentIds(body: Record<string, unknown>): string[] {
+  if (Array.isArray(body.agents)) {
+    return body.agents.map((value) => (typeof value === "string" ? value : "")).filter(Boolean);
+  }
+  if (Array.isArray(body.ids)) {
+    return body.ids.map((value) => (typeof value === "string" ? value : "")).filter(Boolean);
+  }
+  if (typeof body.agent === "string") {
+    return [body.agent];
+  }
+  if (typeof body.id === "string") {
+    return [body.id];
+  }
+  throw new Error("agent id or agents array is required");
 }
 
 function approvalPolicy(value: unknown) {

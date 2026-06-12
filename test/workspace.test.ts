@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -105,11 +105,140 @@ describe("WorkspaceManager", () => {
     });
 
     const agent = agents[0]!;
-    expect(agent.baseCommit).toBe(latestBase);
-    expect(git(agent.cwd, ["rev-parse", "HEAD"])).toBe(latestBase);
+    expect(agent.baseCommit).toBeDefined();
+    expect(agent.baseCommit).not.toBe(latestBase);
+    expect(git(agent.cwd, ["rev-parse", "HEAD"])).toBe(agent.baseCommit!);
+    expect(git(agent.cwd, ["rev-parse", "HEAD^"])).toBe(latestBase);
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
     expect(readFileSync(join(agent.cwd, "README.md"), "utf8")).toContain("local edit");
     expect(readFileSync(join(agent.cwd, "scratch.txt"), "utf8")).toBe("local scratch\n");
+    expect(workspace.diff(agent.id)).toBe("");
+
+    store.close();
+  });
+
+  test("diff includes tracked and non-ignored untracked worktree changes without mutating the index", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const [agent] = await workspace.create(source, {
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    expect(agent).toBeDefined();
+    writeFileSync(join(agent!.cwd, "README.md"), "# test\n\nagent edit\n");
+    writeFileSync(join(agent!.cwd, "new-file.txt"), "new file\n");
+    writeFileSync(join(agent!.cwd, ".gitignore"), "*.log\n");
+    writeFileSync(join(agent!.cwd, "ignored.log"), "ignored\n");
+    const statusBefore = git(agent!.cwd, ["status", "--porcelain"]);
+
+    const diff = workspace.diff(agent!.id);
+
+    expect(diff).toContain("diff --git a/README.md b/README.md");
+    expect(diff).toContain("diff --git a/new-file.txt b/new-file.txt");
+    expect(diff).toContain("diff --git a/.gitignore b/.gitignore");
+    expect(diff).not.toContain("ignored.log");
+    expect(git(agent!.cwd, ["status", "--porcelain"])).toBe(statusBefore);
+
+    store.close();
+  });
+
+  test("diffAgents compares multiple agent diffs instead of dumping patches", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      count: 2,
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    const [left, right] = agents;
+    expect(left).toBeDefined();
+    expect(right).toBeDefined();
+    writeFileSync(join(left!.cwd, "README.md"), "# test\n\nleft edit\n");
+    mkdirSync(join(left!.cwd, "src"));
+    writeFileSync(join(left!.cwd, "src", "left.ts"), "export const left = true;\n");
+    writeFileSync(join(right!.cwd, "README.md"), "# test\n\nright edit\n");
+    mkdirSync(join(right!.cwd, "docs"));
+    writeFileSync(join(right!.cwd, "docs", "right.md"), "right docs\n");
+
+    const text = workspace.diffAgents([left!.id, right!.id]);
+
+    expect(text).toContain(`Compared 2 agents`);
+    expect(text).toContain(`${left!.id}: +`);
+    expect(text).toContain(`${right!.id}: +`);
+    expect(text).toContain("README.md: ");
+    expect(text).toContain(`${left!.id}, ${right!.id}`);
+    expect(text).toContain("unique files:");
+    expect(text).toContain("src/left.ts");
+    expect(text).toContain("docs/right.md");
+    expect(text).not.toContain("diff --git");
+
+    store.close();
+  });
+
+  test("standouts reports top mechanical markers", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      count: 3,
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    const [code, middle, broad] = agents;
+    expect(code).toBeDefined();
+    expect(middle).toBeDefined();
+    expect(broad).toBeDefined();
+
+    mkdirSync(join(code!.cwd, "src"));
+    writeFileSync(join(code!.cwd, "src", "code.ts"), Array.from({ length: 8 }, (_, index) => `export const v${index} = ${index};`).join("\n") + "\n");
+    mkdirSync(join(middle!.cwd, "docs"));
+    writeFileSync(join(middle!.cwd, "docs", "note.md"), "note\n");
+    for (const dir of ["src", "test", "docs"]) {
+      mkdirSync(join(broad!.cwd, dir));
+      writeFileSync(join(broad!.cwd, dir, `${dir}.txt`), `${dir}\n`);
+    }
+
+    backend.notifications.emit({
+      method: "turn/completed",
+      params: { threadId: code!.threadId, turn: { id: code!.activeTurnId, status: "completed" } },
+    });
+    await Bun.sleep(5);
+    backend.notifications.emit({
+      method: "turn/completed",
+      params: { threadId: middle!.threadId, turn: { id: middle!.activeTurnId, status: "completed" } },
+    });
+    await Bun.sleep(5);
+    backend.notifications.emit({
+      method: "turn/completed",
+      params: { threadId: broad!.threadId, turn: { id: broad!.activeTurnId, status: "completed" } },
+    });
+
+    const text = workspace.standouts();
+
+    expect(text).toContain("Standouts are mechanical signals");
+    expect(text).toContain(`most code written:\n  ${code!.id}: +8 -0`);
+    expect(text).toContain(`finished last:\n  ${broad!.id}: idle`);
+    expect(text).toContain(`broadest surface area:\n  ${broad!.id}: 3 surfaces`);
 
     store.close();
   });
@@ -143,7 +272,8 @@ describe("WorkspaceManager", () => {
     expect(child!.repoPath).toBe(source);
     expect(child!.sourcePath).toBe(parent!.cwd);
     expect(child!.parentAgentId).toBe(parent!.id);
-    expect(child!.baseCommit).toBe(parentHead);
+    expect(child!.baseCommit).not.toBe(parentHead);
+    expect(git(child!.cwd, ["rev-parse", "HEAD^"])).toBe(parentHead);
     expect(child!.cwd.startsWith(join(runs, "blackhole-py"))).toBe(true);
     expect(readFileSync(join(child!.cwd, "README.md"), "utf8")).toContain("parent commit");
     expect(store.listManagedAgentsForRepo(parent!.repoId).map((agent) => agent.id).sort()).toEqual([child!.id, parent!.id].sort());

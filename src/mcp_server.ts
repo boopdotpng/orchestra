@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { DEFAULT_MODEL, DEFAULT_SERVICE_TIER } from "./config";
-import { get, getText, post } from "./mcp/client";
+import { get, getText, post, postText } from "./mcp/client";
 
 const server = new McpServer({
   name: "orchestra",
@@ -54,9 +54,31 @@ server.tool(
   async ({ target }) => text(await post("/teardown", { target })),
 );
 
-server.tool("diff", "Get git diff for an agent workspace.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) => ({
-  content: [{ type: "text", text: await getText(`/agents/${encodeURIComponent(id)}/diff`) }],
-}));
+server.tool(
+  "diff",
+  [
+    "Read Orchestra agent diffs.",
+    "Pass one agent id using `id`/`agent` or a one-item `agents` array to get the raw git-diff-formatted patch from that agent's Orchestra baseline to its current worktree.",
+    "Pass two or more ids in `agents` to automatically compare the diffs, showing per-agent size, changed-file overlap, unique files, and surface area instead of dumping full patches.",
+    "Diffs include tracked edits and non-ignored untracked files, and exclude files ignored by the workspace .gitignore.",
+  ].join(" "),
+  {
+    id: z.string().optional().describe("Single 4-character lowercase hex agent id returned by create."),
+    agent: z.string().optional().describe("Alias for id when reading one agent diff."),
+    agents: z.array(z.string()).optional().describe("One or more 4-character lowercase hex agent ids. Two or more ids produce a comparison view."),
+  },
+  async ({ id, agent, agents }) => {
+    const ids = agents && agents.length ? agents : [id ?? agent].filter((value): value is string => typeof value === "string");
+    return { content: [{ type: "text", text: await postText("/diff", { agents: ids }) }] };
+  },
+);
+
+server.tool(
+  "standouts",
+  "Show top-3 mechanical standout markers across agents: most code written, finished last, and broadest surface area. These are interesting signals, not quality scores.",
+  {},
+  async () => ({ content: [{ type: "text", text: await getText("/standouts") }] }),
+);
 
 server.tool(
   "exec",

@@ -18,6 +18,18 @@ export async function post(path: string, data: Record<string, unknown> = {}): Pr
   return parseResponse(response);
 }
 
+export async function postText(path: string, data: Record<string, unknown> = {}): Promise<string> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new OrchestraClientError(await response.text());
+  }
+  return response.text();
+}
+
 export async function getText(path: string): Promise<string> {
   const response = await fetch(`${BASE_URL}${path}`);
   if (!response.ok) {
