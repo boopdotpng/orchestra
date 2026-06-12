@@ -30,6 +30,29 @@ export type CreateAgentPrompt = {
   focus: string;
 };
 
+export type BroadcastOptions = WorkspaceManagerOptions & {
+  workspaceName?: string | undefined;
+  agentIds?: string[] | undefined;
+};
+
+export type BroadcastAgentResult =
+  | {
+      id: string;
+      workspaceName: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      id: string;
+      workspaceName?: string | undefined;
+      ok: false;
+      error: string;
+    };
+
+export type BroadcastResponse = {
+  results: BroadcastAgentResult[];
+};
+
 type ResolvedAgentPrompt =
   | {
       type: "prompt";
@@ -121,6 +144,33 @@ export class WorkspaceManager {
             personality: "friendly",
           });
     return turn;
+  }
+
+  async broadcast(input: string, options: BroadcastOptions): Promise<BroadcastResponse> {
+    const targets = this.broadcastTargets(options.workspaceName, options.agentIds);
+    const results: BroadcastAgentResult[] = [];
+    for (const target of targets) {
+      if (!target.agent) {
+        results.push({ id: target.id, ok: false, error: `unknown agent id: ${target.id}` });
+        continue;
+      }
+      try {
+        results.push({
+          id: target.agent.id,
+          workspaceName: target.agent.workspaceName,
+          ok: true,
+          result: await this.steer(target.agent.id, input, options),
+        });
+      } catch (error) {
+        results.push({
+          id: target.agent.id,
+          workspaceName: target.agent.workspaceName,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { results };
   }
 
   async interrupt(id: string) {
@@ -235,6 +285,32 @@ export class WorkspaceManager {
   async readThread(id: string): Promise<unknown> {
     const agent = this.requiredAgent(id);
     return this.manager.readThread(agent.threadId);
+  }
+
+  private broadcastTargets(workspaceName?: string, agentIds: string[] = []): Array<{ id: string; agent?: ManagedAgent | undefined }> {
+    const workspace = workspaceName?.trim();
+    const ids = agentIds.map((id) => id.trim().toLowerCase()).filter(Boolean);
+    if (!workspace && !ids.length) {
+      throw new Error("broadcast requires workspace or agents");
+    }
+
+    const targets = new Map<string, { id: string; agent?: ManagedAgent | undefined }>();
+    if (workspace) {
+      for (const agent of this.store.listManagedAgents()) {
+        if (sameWorkspaceName(agent.workspaceName, workspace)) {
+          targets.set(agent.id, { id: agent.id, agent });
+        }
+      }
+    }
+    for (const id of ids) {
+      if (!targets.has(id)) {
+        targets.set(id, { id, agent: this.store.getManagedAgent(id) });
+      }
+    }
+    if (!targets.size) {
+      throw new Error(workspace ? `no agents matching workspace ${workspace}` : "no broadcast targets");
+    }
+    return [...targets.values()];
   }
 
   history(id: string): unknown {

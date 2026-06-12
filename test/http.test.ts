@@ -128,6 +128,60 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("broadcasts guidance to a workspace and explicit agent ids", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const targetResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "target workspace",
+        dir: repo,
+        count: 2,
+        prompt: "start",
+      }),
+    );
+    const otherResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "other workspace",
+        dir: repo,
+        prompt: "start",
+      }),
+    );
+    const target = (await targetResponse.json()) as { agents: Array<{ id: string; threadId: string }> };
+    const other = (await otherResponse.json()) as { agents: Array<{ id: string; threadId: string }> };
+
+    const broadcastResponse = await handler(
+      jsonRequest("http://127.0.0.1/broadcast", {
+        workspace: "TARGET WORKSPACE",
+        agents: [other.agents[0]!.id, target.agents[0]!.id, "ffff"],
+        input: "same steer",
+      }),
+    );
+
+    expect(broadcastResponse.status).toBe(200);
+    const body = (await broadcastResponse.json()) as { results: Array<{ id: string; ok: boolean; error?: string }> };
+    const okIds = body.results.filter((result) => result.ok).map((result) => result.id).sort();
+    expect(okIds).toEqual([...target.agents.map((agent) => agent.id), other.agents[0]!.id].sort());
+    expect(body.results.filter((result) => result.id === target.agents[0]!.id)).toHaveLength(1);
+    expect(body.results.find((result) => result.id === "ffff")?.error).toContain("unknown agent id");
+    expect(backend.steeredTurns.map((turn) => turn.input)).toEqual(["same steer", "same steer", "same steer"]);
+    expect(backend.steeredTurns.map((turn) => turn.threadId).sort()).toEqual([...target.agents.map((agent) => agent.threadId), other.agents[0]!.threadId].sort());
+
+    const rejectedResponse = await handler(jsonRequest("http://127.0.0.1/broadcast", { input: "nobody" }));
+    expect(rejectedResponse.status).toBe(500);
+    const rejected = (await rejectedResponse.json()) as { error: string };
+    expect(rejected.error).toContain("broadcast requires workspace or agents");
+
+    store.close();
+  });
+
   test("tears down managed agents for a repository", async () => {
     const root = tempRoot();
     const repo = join(root, "repo");
@@ -357,6 +411,7 @@ class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
   startedTurns: Array<{ threadId: string; input: string }> = [];
+  steeredTurns: Array<{ threadId: string; turnId: string; input: string }> = [];
   private threadCount = 0;
   private turnCount = 0;
 
@@ -409,7 +464,8 @@ class FakeBackend implements CodexBackend {
     this.startedTurns.push({ threadId, input });
     return { turn: { id: `turn-${this.turnCount}`, status: "inProgress" } };
   }
-  async steerTurn() {
+  async steerTurn(threadId: string, turnId: string, input: string) {
+    this.steeredTurns.push({ threadId, turnId, input });
     return {};
   }
   async interruptTurn() {

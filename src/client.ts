@@ -1,6 +1,7 @@
 import type {
   AgentsResponse,
   AgentHistoryResponse,
+  BroadcastRequest,
   ConfigResponse,
   ConfigUpdateRequest,
   CreateAgentsRequest,
@@ -52,6 +53,10 @@ export class OrchestraClient {
 
   teardownWorkspace(input: TeardownRequest): Promise<TeardownRepoResponse> {
     return this.post("/teardown", input);
+  }
+
+  broadcast(input: BroadcastRequest) {
+    return this.post("/broadcast", input);
   }
 
   agents(): Promise<AgentsResponse> {

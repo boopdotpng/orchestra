@@ -149,6 +149,29 @@ server.tool(
   async ({ id, input, model, serviceTier }) => text(await post(`/agents/${encodeURIComponent(id)}/steer`, { input, model, serviceTier })),
 );
 
+server.tool(
+  "broadcast",
+  [
+    "Send the same guidance to multiple agents.",
+    "Provide `workspace`, `agents`, or both; at least one target selector is required.",
+    "When both are provided, targets are the de-duplicated union of all agents in the workspace and the explicit agent ids.",
+    "If an agent is idle, starts a new turn. If an agent is running, sends turn/steer into the tracked active turn.",
+    `New idle turns use service config defaults unless model/serviceTier are provided; defaults are model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER}.`,
+    "Returns per-agent success/error results.",
+  ].join(" "),
+  {
+    workspace: z.string().min(1).optional().describe("Exact workspace/run name whose agents should receive the guidance."),
+    agents: z.array(z.string()).optional().describe("Agent ids that should receive the guidance."),
+    input: z.string().describe("Guidance text to send to every targeted agent."),
+    model: z.string().optional().describe(`Model override for new idle turns. Ignored when steering already-running turns. Omit to use service config, defaulting to ${DEFAULT_MODEL}.`),
+    serviceTier: z
+      .enum(["default", "priority"])
+      .optional()
+      .describe(`Service tier override for new idle turns. Ignored when steering already-running turns. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
+  },
+  async ({ workspace, agents, input, model, serviceTier }) => text(await post("/broadcast", { workspace, agents, input, model, serviceTier })),
+);
+
 server.tool("interrupt", "Interrupt an agent's active turn.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>
   text(await post(`/agents/${encodeURIComponent(id)}/interrupt`)),
 );

@@ -19,6 +19,7 @@ export const ORCHESTRA_API_ROUTES = [
   { method: "POST", path: "/teardown", description: "Remove all agents for a workspace name." },
   { method: "POST", path: "/diff", description: "Read one agent diff or compare multiple agent diffs." },
   { method: "GET", path: "/standouts", description: "Show mechanical standout markers across managed agents." },
+  { method: "POST", path: "/broadcast", description: "Send the same guidance to a workspace and/or list of agents." },
   { method: "GET", path: "/agents", description: "List managed agents." },
   { method: "POST", path: "/agents", description: "Create one or more managed agents." },
   { method: "GET", path: "/agents/:id", description: "Read one managed agent." },
@@ -90,6 +91,20 @@ export type TeardownRepoRequest = {
 
 export type TeardownRequest = {
   workspace: string;
+};
+
+export type BroadcastRequest = {
+  input: string;
+  workspace?: string;
+  workspaceName?: string;
+  agents?: string[];
+  ids?: string[];
+  agent?: string;
+  id?: string;
+  model?: string;
+  serviceTier?: ServiceTier;
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
 };
 
 export type TeardownRepoResponse = {

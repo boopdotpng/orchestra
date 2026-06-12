@@ -119,6 +119,20 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     return textResponse(deps.workspace.standouts(workspaceNameParam(url)));
   }
 
+  if (request.method === "POST" && url.pathname === "/broadcast") {
+    const body = await readBody(request);
+    return jsonResponse(
+      await deps.workspace.broadcast(requiredString(body.input, "input"), {
+        workspaceName: workspaceNameBody(body),
+        agentIds: optionalAgentIds(body),
+        model: typeof body.model === "string" ? body.model : undefined,
+        serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+        approvalPolicy: approvalPolicy(body.approvalPolicy),
+        sandbox: sandboxMode(body.sandbox),
+      }),
+    );
+  }
+
   if (request.method === "GET" && url.pathname === "/agents") {
     return jsonResponse({ agents: deps.store.listManagedAgents() });
   }
@@ -258,6 +272,27 @@ function agentIds(body: Record<string, unknown>): string[] {
     return [body.id];
   }
   throw new Error("agent id or agents array is required");
+}
+
+function optionalAgentIds(body: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  if (Array.isArray(body.agents)) {
+    ids.push(...body.agents.map((value) => (typeof value === "string" ? value : "")).filter(Boolean));
+  }
+  if (Array.isArray(body.ids)) {
+    ids.push(...body.ids.map((value) => (typeof value === "string" ? value : "")).filter(Boolean));
+  }
+  if (typeof body.agent === "string") {
+    ids.push(body.agent);
+  }
+  if (typeof body.id === "string") {
+    ids.push(body.id);
+  }
+  return ids;
+}
+
+function workspaceNameBody(body: Record<string, unknown>): string | undefined {
+  return typeof body.workspace === "string" ? body.workspace : typeof body.workspaceName === "string" ? body.workspaceName : undefined;
 }
 
 function focusedAgents(value: unknown): Array<{ focus: string }> | undefined {
