@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OrchestraStore } from "../src/store/OrchestraStore";
 
 const CLI = join(import.meta.dir, "..", "src", "cli.ts");
 
@@ -24,6 +25,25 @@ afterEach(() => {
 // (async-served) stub. Never use Bun.spawnSync here: it blocks the event
 // loop, the in-process stub can never respond, and the CLI falls back.
 describe("orchestra CLI daemon routing", () => {
+  test("routes create with required workspace name and dir", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "POST /agents": { agents: [{ id: "ab12", status: "running", cwd: "/tmp/runs/repo/ab12", threadId: "thread-1" }] },
+    });
+    const root = mkdtempSync(join(tmpdir(), "orchestra-cli-source-"));
+    roots.push(root);
+
+    const proc = await runCli(["create", "auth cleanup", root, "--prompt", "ship it", "-n", "2", "--url", baseUrl]);
+    expect(proc.stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout).toContain("created 1 agent");
+    expect(proc.stdout).toContain("ab12");
+    expect(proc.stdout).toContain("running");
+    expect(proc.stdout).toContain("/tmp/runs/repo/ab12");
+    const create = requests.find((request) => request.path === "/agents");
+    expect(create?.body).toMatchObject({ name: "auth cleanup", dir: root, prompt: "ship it", count: 2 });
+  });
+
   test("routes interrupt through a reachable orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
@@ -52,29 +72,31 @@ describe("orchestra CLI daemon routing", () => {
     expect(steer?.body).toEqual({ input: "focus on tests", model: "gpt-5.5" });
   });
 
-  test("routes teardown of one agent id through the orchestra server", async () => {
+  test("routes teardown of a workspace name through the orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/repo/ab12" }] },
     });
 
-    const proc = await runCli(["teardown", "ab12", "--url", baseUrl]);
+    const proc = await runCli(["teardown", "blackhole-py", "--url", baseUrl]);
     expect(proc.exitCode).toBe(0);
-    expect(proc.stdout).toBe("removed ab12\t/tmp/runs/repo/ab12\n");
+    expect(proc.stdout).toContain("removed 1 agent");
+    expect(proc.stdout).toContain("ab12");
+    expect(proc.stdout).toContain("/tmp/runs/repo/ab12");
     const teardown = requests.find((request) => request.path === "/teardown");
-    expect(teardown?.body).toEqual({ target: "ab12" });
+    expect(teardown?.body).toEqual({ workspace: "blackhole-py" });
   });
 
-  test("routes teardown of a bare repo name without resolving it as a path", async () => {
+  test("routes teardown of a workspace name with spaces", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/bh-tournament/ab12" }] },
     });
 
-    const proc = await runCli(["teardown", "bh-tournament", "--url", baseUrl]);
+    const proc = await runCli(["teardown", "focused pass", "--url", baseUrl]);
     expect(proc.exitCode).toBe(0);
     const teardown = requests.find((request) => request.path === "/teardown");
-    expect(teardown?.body).toEqual({ target: "bh-tournament" });
+    expect(teardown?.body).toEqual({ workspace: "focused pass" });
   });
 
   test("prints the server error message on failure", async () => {
@@ -84,6 +106,70 @@ describe("orchestra CLI daemon routing", () => {
     const proc = await runCli(["interrupt", "abcd", "--url", baseUrl]);
     expect(proc.exitCode).toBe(1);
     expect(proc.stderr).toContain("unknown agent id: abcd");
+  });
+});
+
+describe("orchestra CLI local formatting", () => {
+  test("prints readable status without putting long output in the table", async () => {
+    const proc = await runCli(["status"], (dbPath) => {
+      const store = new OrchestraStore(dbPath);
+      const repo = store.upsertRepo({
+        path: "/tmp/repos/blackhole-py",
+        baseCommit: "abcdef",
+        baseBranch: "main",
+        createdAt: 1,
+      });
+      store.insertManagedAgent({
+        id: "ab12",
+        repoId: repo.id,
+        workspaceName: "trace work",
+        repoPath: repo.path,
+        baseCommit: repo.baseCommit,
+        cwd: "/tmp/runs/blackhole-py/ab12",
+        branch: "orchestra/ab12",
+        threadId: "thread-1",
+        status: "idle",
+        createdAt: 1,
+      });
+      store.applyEvent({
+        type: "agent.started",
+        agent: {
+          threadId: "thread-1",
+          cwd: "/tmp/runs/blackhole-py/ab12",
+          status: "idle",
+        },
+      });
+      store.applyEvent({
+        type: "agent.tokenUsage",
+        threadId: "thread-1",
+        tokenUsage: { totalTokens: 1_234_567 },
+      });
+      store.applyEvent({
+        type: "turn.completed",
+        threadId: "thread-1",
+        turn: { threadId: "thread-1", turnId: "turn-1", status: "completed" },
+      });
+      store.applyEvent({
+        type: "item.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "item-1",
+        item: {
+          type: "agentMessage",
+          text: "This is a deliberately long assistant tail that belongs below the table, where it can be scanned without widening every status column.",
+        },
+      });
+      store.close();
+    });
+
+    expect(proc.stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout).toContain("agents 1  idle 1");
+    expect(proc.stdout).toContain("id    workspace");
+    expect(proc.stdout).toContain("tokens");
+    expect(proc.stdout).toContain("1.2M");
+    expect(proc.stdout).toContain("last output");
+    expect(proc.stdout).toContain("ab12  This is a deliberately long assistant tail");
   });
 });
 
@@ -108,12 +194,14 @@ function startStubServer(requests: RecordedRequest[], routes: Record<string, unk
   return `http://127.0.0.1:${server.port}`;
 }
 
-async function runCli(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCli(args: string[], prepareDb?: (dbPath: string) => void): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const root = mkdtempSync(join(tmpdir(), "orchestra-cli-test-"));
   roots.push(root);
+  const dbPath = join(root, "orchestra.db");
+  prepareDb?.(dbPath);
   // Isolated --db and runs root so a fallback to local execution can never
   // touch real orchestra state.
-  const proc = Bun.spawn(["bun", CLI, ...args, "--db", join(root, "orchestra.db")], {
+  const proc = Bun.spawn(["bun", CLI, ...args, "--db", dbPath], {
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, ORCHESTRA_URL: "", ORCHESTRA_RUNS: join(root, "runs"), HOME: root },

@@ -141,8 +141,8 @@ The MCP server talks to the local Orchestra HTTP service, so the systemd service
 MCP tools:
 
 - `register`: pin a source repo base commit.
-- `teardown`: remove Orchestra-managed agents and workspaces by agent id, repo folder name, source workdir, or `all`.
-- `create`: create one or more isolated agent workspaces. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `repoPath`, `baseCommit`, `sourcePath`, optional `parentAgentId`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
+- `teardown`: remove Orchestra-managed agents and workspaces by exact workspace/run name.
+- `create`: create one or more isolated agent workspaces under a required workspace name. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `workspaceName`, `repoPath`, `baseCommit`, `sourcePath`, optional `parentAgentId`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
 - `ls`: list managed agents.
 - `status`: show agents and pending approvals.
 - `remove`: remove one managed agent and its workspace by id.
@@ -186,11 +186,11 @@ Global options:
 These are the main commands for multi-agent work.
 
 ```bash
-orchestra create <dir> -n 4 --prompt "try four approaches"
-orchestra create <dir> --prompt-file prompt.md
+orchestra create "auth cleanup" <dir> -n 4 --prompt "try four approaches"
+orchestra create "dashboard polish" <dir> --prompt-file prompt.md
 ```
 
-Creates one or more isolated workspaces from the repo. Each agent gets a short id, its own worktree copy, and a branch named `orchestra/<id>`. A prompt is required so every created agent has an initial turn.
+Creates one or more isolated workspaces from the repo under the required workspace name. Each agent gets a short id, its own worktree copy, and a branch named `orchestra/<id>`. A prompt is required so every created agent has an initial turn. The dashboard groups agents by workspace name first, with the source repo path shown as context.
 
 ```bash
 orchestra status
@@ -198,14 +198,13 @@ orchestra status
 
 Prints enriched status for all managed agents, including last assistant tail, turn count, token usage, last activity, and pending approvals.
 
+The table stays compact and prints recent assistant output below it, so long summaries do not stretch every row.
+
 ```bash
-orchestra teardown <id>
-orchestra teardown <repo-name>
-orchestra teardown <workdir>
-orchestra teardown all
+orchestra teardown <workspace-name>
 ```
 
-Destroys one agent by id, all agents for a source workdir, or every managed agent.
+Destroys all agents in the exact workspace/run name. To remove a single agent, use `orchestra remove <id>`.
 
 ```bash
 orchestra steer <id> "run tests and fix failures"
@@ -231,6 +230,15 @@ orchestra interrupt <id>
 ```
 
 Interrupts the agent's active turn.
+
+```bash
+orchestra ls
+orchestra remove <id>
+orchestra standouts
+orchestra approvals
+```
+
+Lists managed agents, removes one agent, prints mechanical standout signals, or lists pending approvals.
 
 ```bash
 orchestra monitor <id>
@@ -284,11 +292,10 @@ orchestra thread-interrupt THREAD_ID [TURN_ID]
 Reads, steers, or interrupts app-server threads directly.
 
 ```bash
-orchestra approvals
 orchestra models
 ```
 
-Lists pending approvals stored by Orchestra, or lists available Codex models and service tiers.
+Lists available Codex models and service tiers.
 
 ## Development
 

@@ -291,7 +291,7 @@ agents — it figures out fan-out, judging, and apply on its own. No `fanout`,
 
 ```
 register  <dir>                          pin repo + base commit (one-time)
-create    <dir> [-n N] [--prompt T | --prompt-file F]
+create    <name> <dir> [-n N] [--prompt T | --prompt-file F]
                                          reflink + branch + thread + optional first turn → prints id(s)
 teardown  <dir>                          stop threads + rm copies
 ls                                       id, status, repo, branch
@@ -313,7 +313,7 @@ is `steer`.
   (current default-branch tip). Guarantees all agents — created now or later —
   fork from the *same* base, which is what makes fan-in coherent. Idempotent.
   `create` auto-registers if skipped.
-- **`create <dir>`** — the primitive. Reflink-copies the repo, branches off the
+- **`create <name> <dir>`** — the primitive. Reflink-copies the repo, branches off the
   pinned base, starts an idle thread, optionally fires the first turn, mints a
   **4-hex agent id**, returns the id(s). The orchestrator never needs the
   workdir (derivable + stored).
@@ -321,10 +321,9 @@ is `steer`.
 ### 10.3 create semantics (per-prompt; heterogeneity is free)
 
 ```
-create <dir> --prompt "task"         → 1 agent, that prompt           → 1 id
-create <dir> --prompt-file plan.md   → 1 agent, prompt from file      → 1 id
-create <dir> -n 8 --prompt "task"    → 8 agents, SAME prompt (fan-out)→ 8 ids
-create <dir>                         → 1 idle agent (steer later)     → 1 id
+create "auth" <dir> --prompt "task"       → 1 agent, that prompt           → 1 id
+create "auth" <dir> --prompt-file plan.md → 1 agent, prompt from file      → 1 id
+create "auth" <dir> -n 8 --prompt "task"  → 8 agents, SAME prompt (fan-out)→ 8 ids
 ```
 
 - `n` defaults to 1. `-n N` is purely **same-prompt replication**.

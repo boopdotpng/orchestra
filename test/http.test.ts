@@ -33,6 +33,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "ship workspace",
         dir: repo,
         count: 1,
         prompt: "ship it",
@@ -40,13 +41,90 @@ describe("Orchestra HTTP handler", () => {
       }),
     );
     expect(createResponse.status).toBe(200);
-    const created = (await createResponse.json()) as { agents: Array<{ id: string; status: string }> };
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; status: string; workspaceName: string }> };
     expect(created.agents[0]?.id).toMatch(/^[0-9a-f]{4}$/);
+    expect(created.agents[0]?.workspaceName).toBe("ship workspace");
 
     const statusResponse = await handler(new Request("http://127.0.0.1/status"));
     const status = (await statusResponse.json()) as { agents: unknown[]; approvals: unknown[] };
     expect(status.agents).toHaveLength(1);
     expect(status.approvals).toHaveLength(0);
+
+    store.close();
+  });
+
+  test("filters status and standouts by exact workspace name", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const targetResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "target workspace",
+        dir: repo,
+        count: 1,
+        prompt: "ship it",
+      }),
+    );
+    const otherResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "other workspace",
+        dir: repo,
+        count: 1,
+        prompt: "ship it",
+      }),
+    );
+    const target = (await targetResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    const other = (await otherResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    writeFileSync(join(target.agents[0]!.cwd, "target.ts"), "export const target = true;\n");
+    writeFileSync(join(other.agents[0]!.cwd, "other.ts"), "export const other = true;\n");
+
+    const statusResponse = await handler(new Request("http://127.0.0.1/status?workspace=TARGET%20WORKSPACE"));
+    const status = (await statusResponse.json()) as { agents: Array<{ id: string }>; approvals: unknown[] };
+    expect(status.agents.map((agent) => agent.id)).toEqual([target.agents[0]!.id]);
+    expect(status.approvals).toHaveLength(0);
+
+    const standoutsResponse = await handler(new Request("http://127.0.0.1/standouts?workspace=target%20workspace"));
+    const standouts = await standoutsResponse.text();
+    expect(standouts).toContain(target.agents[0]!.id);
+    expect(standouts).not.toContain(other.agents[0]!.id);
+
+    store.close();
+  });
+
+  test("creates focused agents from shared prompt request", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "focused pass",
+        dir: repo,
+        sharedPrompt: "Second focused pass",
+        agents: [{ focus: "Fix reg 4" }, { focus: "Add tracepoints" }],
+      }),
+    );
+
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; workspaceName: string }> };
+    expect(created.agents).toHaveLength(2);
+    expect(created.agents.map((agent) => agent.workspaceName)).toEqual(["focused pass", "focused pass"]);
+    expect(backend.startedTurns.map((turn) => turn.input)).toEqual([
+      "Second focused pass\n\nFocus:\nFix reg 4",
+      "Second focused pass\n\nFocus:\nAdd tracepoints",
+    ]);
 
     store.close();
   });
@@ -63,6 +141,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "teardown workspace",
         dir: repo,
         count: 2,
         prompt: "work",
@@ -90,6 +169,47 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("tears down managed agents by workspace name", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const targetResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "blackhole-py",
+        dir: repo,
+        prompt: "work",
+      }),
+    );
+    const otherResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "trace work",
+        dir: repo,
+        prompt: "work",
+      }),
+    );
+    const target = (await targetResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    const other = (await otherResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+
+    const teardownResponse = await handler(jsonRequest("http://127.0.0.1/teardown", { workspace: "blackhole-py" }));
+    expect(teardownResponse.status).toBe(200);
+    const tornDown = (await teardownResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    expect(tornDown.agents.map((agent) => agent.id)).toEqual(target.agents.map((agent) => agent.id));
+    expect(existsSync(target.agents[0]!.cwd)).toBe(false);
+    expect(existsSync(other.agents[0]!.cwd)).toBe(true);
+
+    const agentsResponse = await handler(new Request("http://127.0.0.1/agents"));
+    const remaining = (await agentsResponse.json()) as { agents: Array<{ id: string }> };
+    expect(remaining.agents.map((agent) => agent.id)).toEqual(other.agents.map((agent) => agent.id));
+
+    store.close();
+  });
+
   test("removes one managed agent by id", async () => {
     const root = tempRoot();
     const repo = join(root, "repo");
@@ -102,6 +222,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "remove workspace",
         dir: repo,
         count: 2,
         prompt: "work",
@@ -139,6 +260,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "missing prompt",
         dir: repo,
       }),
     );
@@ -162,6 +284,7 @@ describe("Orchestra HTTP handler", () => {
 
     const createResponse = await handler(
       jsonRequest("http://127.0.0.1/agents", {
+        name: "history workspace",
         dir: repo,
         prompt: "ship it",
       }),
@@ -234,6 +357,7 @@ describe("Orchestra HTTP handler", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
+  startedTurns: Array<{ threadId: string; input: string }> = [];
   private threadCount = 0;
 
   async connect() {}
@@ -280,7 +404,8 @@ class FakeBackend implements CodexBackend {
   async unarchiveThread() {
     return {};
   }
-  async startTurn() {
+  async startTurn(threadId: string, input: string) {
+    this.startedTurns.push({ threadId, input });
     return { turn: { id: "turn-1", status: "inProgress" } };
   }
   async steerTurn() {

@@ -33,6 +33,7 @@ describe("WorkspaceManager", () => {
 
     const repo = workspace.register(source);
     const agents = await workspace.create(source, {
+      workspaceName: "source cleanup",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -41,14 +42,46 @@ describe("WorkspaceManager", () => {
     expect(agents).toHaveLength(1);
     const agent = agents[0]!;
     expect(agent.id).toMatch(/^[0-9a-f]{4}$/);
+    expect(agent.workspaceName).toBe("source cleanup");
     expect(agent.cwd.startsWith(runs)).toBe(true);
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
     expect(backend.startedThreads[0]?.model).toBe("gpt-6");
     expect(backend.startedThreads[0]?.serviceTier).toBe("priority");
     expect(backend.startedThreads[0]?.approvalPolicy).toBe("never");
     expect(backend.startedThreads[0]?.sandbox).toBe("danger-full-access");
+    expect(backend.threadNames[0]).toEqual({ threadId: "thread-1", name: "source cleanup" });
     expect(store.getManagedAgent(agent.id)?.activeTurnId).toBe("turn-1");
     expect(backend.startedTurns[0]?.input).toBe("hello agent");
+
+    store.close();
+  });
+
+  test("creates focused agents from shared prompt and per-agent focus", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      workspaceName: "focused pass",
+      runsRoot: runs,
+      sharedPrompt: "Shared context",
+      promptTemplate: "{sharedPrompt}\n\nAgent {index}/{count}\nWorkspace {workspace}\nBranch {branch}\nCWD {cwd}\nFocus: {focus}",
+      agents: [{ focus: "Fix reg 4" }, { focus: "Add tracepoints" }],
+    });
+
+    expect(agents).toHaveLength(2);
+    expect(agents.every((agent) => agent.workspaceName === "focused pass")).toBe(true);
+    expect(backend.startedTurns[0]?.input).toBe(
+      `Shared context\n\nAgent 1/2\nWorkspace focused pass\nBranch orchestra/${agents[0]!.id}\nCWD ${agents[0]!.cwd}\nFocus: Fix reg 4`,
+    );
+    expect(backend.startedTurns[1]?.input).toBe(
+      `Shared context\n\nAgent 2/2\nWorkspace focused pass\nBranch orchestra/${agents[1]!.id}\nCWD ${agents[1]!.cwd}\nFocus: Add tracepoints`,
+    );
 
     store.close();
   });
@@ -65,6 +98,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "completion hook",
       runsRoot: runs,
       prompt: "hello agent",
       onComplete: `mkdir -p ${done} && touch ${done}/{id}`,
@@ -100,6 +134,7 @@ describe("WorkspaceManager", () => {
     writeFileSync(join(source, "scratch.txt"), "local scratch\n");
 
     const agents = await workspace.create(source, {
+      workspaceName: "dirty tree",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -128,6 +163,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const [agent] = await workspace.create(source, {
+      workspaceName: "diff test",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -160,6 +196,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "compare diffs",
       count: 2,
       runsRoot: runs,
       prompt: "hello agent",
@@ -200,6 +237,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "standouts",
       count: 3,
       runsRoot: runs,
       prompt: "hello agent",
@@ -232,13 +270,24 @@ describe("WorkspaceManager", () => {
       method: "turn/completed",
       params: { threadId: broad!.threadId, turn: { id: broad!.activeTurnId, status: "completed" } },
     });
+    const [other] = await workspace.create(source, {
+      workspaceName: "other standouts",
+      count: 1,
+      runsRoot: runs,
+      prompt: "hello other agent",
+    });
+    expect(other).toBeDefined();
+    mkdirSync(join(other!.cwd, "src"));
+    writeFileSync(join(other!.cwd, "src", "other.ts"), Array.from({ length: 20 }, (_, index) => `export const other${index} = ${index};`).join("\n") + "\n");
 
-    const text = workspace.standouts();
+    const text = workspace.standouts("standouts");
 
     expect(text).toContain("Standouts are mechanical signals");
     expect(text).toContain(`most code written:\n  ${code!.id}: +8 -0`);
     expect(text).toContain(`finished last:\n  ${broad!.id}: idle`);
     expect(text).toContain(`broadest surface area:\n  ${broad!.id}: 3 surfaces`);
+    expect(text).not.toContain(other!.id);
+    expect(workspace.standouts("missing")).toBe("no agents matching workspace missing");
 
     store.close();
   });
@@ -254,6 +303,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const [parent] = await workspace.create(source, {
+      workspaceName: "parent workspace",
       runsRoot: runs,
       prompt: "parent agent",
     });
@@ -264,6 +314,7 @@ describe("WorkspaceManager", () => {
     const parentHead = git(parent!.cwd, ["rev-parse", "HEAD"]);
 
     const [child] = await workspace.create(parent!.cwd, {
+      workspaceName: "child workspace",
       runsRoot: runs,
       prompt: "child agent",
     });
@@ -292,6 +343,7 @@ describe("WorkspaceManager", () => {
     initGitRepo(source);
 
     const agents = await workspace.create(source, {
+      workspaceName: "teardown",
       runsRoot: runs,
       prompt: "hello agent",
     });
@@ -306,6 +358,38 @@ describe("WorkspaceManager", () => {
 
     store.close();
   });
+
+  test("tears down only agents with the matching workspace name", async () => {
+    const root = tempRoot();
+    const source = join(root, "blackhole-py");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const target = await workspace.create(source, {
+      workspaceName: "blackhole-py",
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+    const other = await workspace.create(source, {
+      workspaceName: "trace work",
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+
+    const removed = await workspace.teardownWorkspace("BLACKHOLE-PY");
+
+    expect(removed.map((candidate) => candidate.id)).toEqual(target.map((agent) => agent.id));
+    expect(store.getManagedAgent(target[0]!.id)).toBeUndefined();
+    expect(store.getManagedAgent(other[0]!.id)).toBeDefined();
+    expect(existsSync(target[0]!.cwd)).toBe(false);
+    expect(existsSync(other[0]!.cwd)).toBe(true);
+
+    store.close();
+  });
 });
 
 class FakeBackend implements CodexBackend {
@@ -313,11 +397,13 @@ class FakeBackend implements CodexBackend {
   requests = new EventBus<BackendServerRequest>();
   startedThreads: Array<{
     cwd?: string | undefined;
+    name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
   }> = [];
+  threadNames: Array<{ threadId: string; name: string }> = [];
   startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
   private threadCount = 0;
 
@@ -334,6 +420,7 @@ class FakeBackend implements CodexBackend {
   }
   async startThread(options: {
     cwd?: string | undefined;
+    name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
     approvalPolicy?: string | undefined;
@@ -360,7 +447,8 @@ class FakeBackend implements CodexBackend {
   async readThread() {
     return {};
   }
-  async setThreadName() {
+  async setThreadName(threadId: string, name: string) {
+    this.threadNames.push({ threadId, name });
     return {};
   }
   async setThreadGoal() {

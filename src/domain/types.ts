@@ -38,6 +38,7 @@ export type ManagedAgentStatus = "idle" | "running" | "waiting_approval" | "erro
 export type ManagedAgent = {
   id: string;
   repoId: number;
+  workspaceName: string;
   repoPath?: string | undefined;
   baseCommit?: string | undefined;
   sourcePath?: string | undefined;

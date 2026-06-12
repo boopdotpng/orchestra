@@ -9,7 +9,7 @@ import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
 import { expandHome, readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
 import { DEFAULT_MODEL, loadOrchestraConfig, normalizeServiceTier, type OrchestraConfig } from "./config";
-import type { AgentEvent, Approval, ApprovalPolicy, SandboxMode, StartAgentOptions } from "./domain/types";
+import type { AgentEvent, Approval, ApprovalPolicy, ManagedAgent, ManagedAgentSummary, SandboxMode, StartAgentOptions } from "./domain/types";
 
 type ParsedArgs = {
   command: string;
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
         await create(workspace, args, config);
         break;
       case "status":
-        status(store);
+        status(store, args);
         break;
       case "teardown":
         await teardown(workspace, args);
@@ -83,6 +83,9 @@ async function main(): Promise<void> {
         break;
       case "ls":
         ls(store);
+        break;
+      case "standouts":
+        console.log(workspace.standouts());
         break;
       case "diff":
         diff(workspace, args);
@@ -158,17 +161,17 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
     case "create": {
       // Resolve paths client-side: the daemon resolves relative paths against
       // its own cwd, not the caller's.
-      const dir = expandHome(required(args.positionals[0], "dir"));
+      const name = required(args.positionals[0], "name");
+      const dir = expandHome(required(args.positionals[1], "dir"));
       const prompt = required(promptFlag(args), "prompt");
       const { agents } = await client.createAgents({
+        name,
         dir,
         prompt,
         count: flagNumber(args.flags.n) ?? 1,
         ...turnOverrides(args),
       });
-      for (const agent of agents) {
-        console.log(`${agent.id}\t${agent.status}\t${agent.cwd}\t${agent.threadId}`);
-      }
+      printCreatedAgents(agents);
       return;
     }
     case "steer": {
@@ -186,18 +189,15 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
       return;
     }
     case "teardown": {
-      const target = required(args.positionals[0], "target");
-      const resolved = target === "all" || /^[0-9a-f]{4}$/i.test(target) || !isPathLikeTarget(target) ? target : expandHome(target);
-      const { agents } = await client.teardownTarget({ target: resolved });
-      for (const agent of agents) {
-        console.log(`removed ${agent.id}\t${agent.cwd}`);
-      }
+      const workspaceName = required(args.positionals[0], "workspace name");
+      const { agents } = await client.teardownWorkspace({ workspace: workspaceName });
+      printRemovedAgents(agents);
       return;
     }
     case "remove": {
       const id = required(args.positionals[0], "agent id");
       const { agent } = await client.remove(id);
-      console.log(`removed ${agent.id}\t${agent.cwd}`);
+      printRemovedAgents([agent]);
       return;
     }
     default:
@@ -232,9 +232,11 @@ function register(workspace: WorkspaceManager, args: ParsedArgs): void {
 }
 
 async function create(workspace: WorkspaceManager, args: ParsedArgs, config: OrchestraConfig): Promise<void> {
-  const dir = required(args.positionals[0], "dir");
+  const name = required(args.positionals[0], "name");
+  const dir = required(args.positionals[1], "dir");
   const prompt = required(promptFlag(args), "prompt");
   const createOptions = {
+    workspaceName: name,
     count: flagNumber(args.flags.n) ?? 1,
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
@@ -242,36 +244,46 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
     sandbox: sandboxMode(args.flags.sandbox),
   };
   const agents = await workspace.create(dir, { ...createOptions, prompt });
-  for (const agent of agents) {
-    console.log(`${agent.id}\t${agent.status}\t${agent.cwd}\t${agent.threadId}`);
-  }
+  printCreatedAgents(agents);
 }
 
 async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
-  const target = required(args.positionals[0], "target");
-  const agents = await workspace.teardownTarget(target);
-  for (const agent of agents) {
-    console.log(`removed ${agent.id}\t${agent.cwd}`);
-  }
+  const workspaceName = required(args.positionals[0], "workspace name");
+  const agents = await workspace.teardownWorkspace(workspaceName);
+  printRemovedAgents(agents);
 }
 
-function status(store: OrchestraStore): void {
-  const agents = store.listManagedAgentSummaries();
+function status(store: OrchestraStore, args: ParsedArgs): void {
+  const workspaceFilter = typeof args.flags.workspace === "string" ? args.flags.workspace : args.positionals[0];
+  const agents = store
+    .listManagedAgentSummaries()
+    .filter((agent) => !workspaceFilter || agent.workspaceName.toLowerCase().includes(workspaceFilter.toLowerCase()))
+    .sort(
+      (left, right) =>
+        left.workspaceName.localeCompare(right.workspaceName) ||
+        shortPath(left.repoPath ?? left.cwd).localeCompare(shortPath(right.repoPath ?? right.cwd)) ||
+        (left.createdAt ?? 0) - (right.createdAt ?? 0),
+    );
   if (!agents.length) {
-    console.log("no agents");
+    console.log(workspaceFilter ? `no agents matching workspace ${workspaceFilter}` : "no agents");
     return;
   }
+  const pending = store.listPendingApprovals();
+  printStatusHeader(agents, pending.length);
   const rows = agents.map((agent) => ({
     id: agent.id,
+    workspace: agent.workspaceName,
     status: agent.status,
     turns: String(agent.turnCount),
     tokens: agent.tokensUsed === undefined ? "-" : compactNumber(agent.tokensUsed),
     activity: relativeTime(agent.lastActivityAt),
-    workdir: shortPath(agent.repoPath ?? agent.cwd),
-    last: oneLine(agent.lastAssistantMessageTail ?? agent.lastTurnSummary ?? "-"),
+    repo: shortPath(agent.repoPath ?? agent.cwd),
+    workdir: shortPath(agent.cwd),
   }));
-  printTable(rows, ["id", "status", "turns", "tokens", "activity", "workdir", "last"]);
-  const pending = store.listPendingApprovals();
+  printTable(rows, ["id", "workspace", "status", "turns", "tokens", "activity", "repo", "workdir"], {
+    maxWidths: { workspace: 20, status: 16, repo: 26, workdir: 26 },
+  });
+  printLastOutput(agents);
   if (pending.length) {
     console.log(`\npending approvals: ${pending.length}`);
   }
@@ -280,13 +292,26 @@ function status(store: OrchestraStore): void {
 async function remove(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
   const id = required(args.positionals[0], "agent id");
   const agent = await workspace.remove(id);
-  console.log(`removed ${agent.id}\t${agent.cwd}`);
+  printRemovedAgents([agent]);
 }
 
 function ls(store: OrchestraStore): void {
-  for (const agent of store.listManagedAgents()) {
-    console.log(`${agent.id}\t${agent.status}\t${agent.repoPath ?? ""}\t${agent.branch}\t${agent.cwd}`);
+  const agents = store.listManagedAgents();
+  if (!agents.length) {
+    console.log("no agents");
+    return;
   }
+  const rows = agents.map((agent) => ({
+    id: agent.id,
+    workspace: agent.workspaceName,
+    status: agent.status,
+    repo: shortPath(agent.repoPath ?? ""),
+    branch: agent.branch,
+    workdir: shortPath(agent.cwd),
+  }));
+  printTable(rows, ["id", "workspace", "status", "repo", "branch", "workdir"], {
+    maxWidths: { workspace: 20, repo: 28, branch: 24, workdir: 28 },
+  });
 }
 
 function diff(workspace: WorkspaceManager, args: ParsedArgs): void {
@@ -397,9 +422,19 @@ async function list(manager: AgentManager, args: ParsedArgs): Promise<void> {
     limit: flagNumber(args.flags.limit) ?? 50,
     searchTerm: typeof args.flags.search === "string" ? args.flags.search : undefined,
   });
-  for (const agent of agents) {
-    console.log(`${agent.threadId}\t${agent.status}\t${agent.cwd ?? ""}\t${agent.name ?? agent.preview ?? ""}`);
+  if (!agents.length) {
+    console.log("no threads");
+    return;
   }
+  const rows = agents.map((agent) => ({
+    thread: agent.threadId,
+    status: agent.status,
+    cwd: shortPath(agent.cwd ?? ""),
+    name: oneLine(agent.name ?? agent.preview ?? "-"),
+  }));
+  printTable(rows, ["thread", "status", "cwd", "name"], {
+    maxWidths: { thread: 36, status: 12, cwd: 32, name: 56 },
+  });
 }
 
 async function threadInterrupt(manager: AgentManager, args: ParsedArgs): Promise<void> {
@@ -653,23 +688,21 @@ function promptFrom(args: ParsedArgs): string {
   return prompt;
 }
 
-function isPathLikeTarget(target: string): boolean {
-  return (
-    target === "." ||
-    target === ".." ||
-    target === "~" ||
-    target.startsWith("./") ||
-    target.startsWith("../") ||
-    target.startsWith("~/") ||
-    target.startsWith("/") ||
-    target.includes("/")
-  );
-}
-
 function printApprovals(approvals: Approval[]): void {
-  for (const approval of approvals) {
-    console.log(`${approval.requestId}\t${approval.kind}\t${approval.threadId ?? ""}\t${approval.turnId ?? ""}`);
+  if (!approvals.length) {
+    console.log("no pending approvals");
+    return;
   }
+  const rows = approvals.map((approval) => ({
+    request: String(approval.requestId),
+    kind: approval.kind,
+    thread: approval.threadId ?? "-",
+    turn: approval.turnId ?? "-",
+    age: relativeTime(approval.createdAtMs),
+  }));
+  printTable(rows, ["request", "kind", "thread", "turn", "age"], {
+    maxWidths: { request: 24, kind: 16, thread: 36, turn: 36 },
+  });
 }
 
 type MonitorAgent = {
@@ -870,6 +903,82 @@ function oneLine(text: string): string {
   return cleaned.length > 300 ? cleaned.slice(0, 300) : cleaned;
 }
 
+function printCreatedAgents(agents: ManagedAgent[]): void {
+  console.log(`created ${plural(agents.length, "agent")}`);
+  printTable(
+    agents.map((agent) => ({
+      id: agent.id,
+      status: agent.status,
+      workspace: agent.workspaceName,
+      branch: agent.branch,
+      workdir: agent.cwd,
+      thread: agent.threadId,
+    })),
+    ["id", "status", "workspace", "branch", "workdir", "thread"],
+    { maxWidths: { status: 16, workspace: 20, branch: 24, workdir: 56, thread: 36 } },
+  );
+}
+
+function printRemovedAgents(agents: Array<Pick<ManagedAgent, "id" | "cwd">>): void {
+  console.log(`removed ${plural(agents.length, "agent")}`);
+  if (!agents.length) {
+    return;
+  }
+  printTable(
+    agents.map((agent) => ({
+      id: agent.id,
+      workdir: agent.cwd,
+    })),
+    ["id", "workdir"],
+    { maxWidths: { workdir: 72 } },
+  );
+}
+
+function printStatusHeader(agents: ManagedAgentSummary[], pendingApprovals: number): void {
+  const counts = new Map<string, number>();
+  for (const agent of agents) {
+    counts.set(agent.status, (counts.get(agent.status) ?? 0) + 1);
+  }
+  const order = ["running", "waiting_approval", "idle", "error", "notLoaded"];
+  const pieces = [`agents ${agents.length}`];
+  for (const status of order) {
+    const count = counts.get(status);
+    if (count) {
+      pieces.push(`${statusLabel(status)} ${count}`);
+    }
+  }
+  if (pendingApprovals) {
+    pieces.push(`approvals ${pendingApprovals}`);
+  }
+  console.log(pieces.join("  "));
+  console.log("");
+}
+
+function printLastOutput(agents: ManagedAgentSummary[]): void {
+  const rows = agents
+    .map((agent) => ({
+      id: agent.id,
+      text: oneLine(agent.lastAssistantMessageTail ?? agent.lastTurnSummary ?? ""),
+    }))
+    .filter((row) => row.text.length > 0);
+  if (!rows.length) {
+    return;
+  }
+  const width = Math.max(48, Math.min(120, terminalColumns() - 8));
+  console.log("\nlast output");
+  for (const row of rows) {
+    console.log(`  ${row.id}  ${ellipsize(row.text, width)}`);
+  }
+}
+
+function statusLabel(status: string): string {
+  return status === "waiting_approval" ? "approval" : status;
+}
+
+function plural(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
 function shortPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts.length > 2 ? parts.slice(-2).join("/") : path;
@@ -908,11 +1017,16 @@ function relativeTime(ms: number | undefined): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function printTable(rows: Array<Record<string, string>>, columns: string[]): void {
+type TableOptions = {
+  maxWidths?: Record<string, number> | undefined;
+};
+
+function printTable(rows: Array<Record<string, string>>, columns: string[], options: TableOptions = {}): void {
   const widths = Object.fromEntries(columns.map((column) => [column, column.length]));
   for (const row of rows) {
     for (const column of columns) {
-      widths[column] = Math.max(widths[column] ?? 0, Math.min((row[column] ?? "").length, column === "last" ? 80 : 32));
+      const max = options.maxWidths?.[column] ?? 32;
+      widths[column] = Math.max(widths[column] ?? 0, Math.min((row[column] ?? "").length, max));
     }
   }
   console.log(columns.map((column) => column.padEnd(widths[column] ?? column.length)).join("  "));
@@ -921,7 +1035,7 @@ function printTable(rows: Array<Record<string, string>>, columns: string[]): voi
     console.log(
       columns
         .map((column) => {
-          const limit = column === "last" ? 80 : 32;
+          const limit = options.maxWidths?.[column] ?? 32;
           const text = ellipsize(row[column] ?? "", limit);
           return text.padEnd(widths[column] ?? column.length);
         })
@@ -931,7 +1045,17 @@ function printTable(rows: Array<Record<string, string>>, columns: string[]): voi
 }
 
 function ellipsize(text: string, max: number): string {
-  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "..." : text;
+  if (text.length <= max) {
+    return text;
+  }
+  if (max <= 3) {
+    return ".".repeat(Math.max(0, max));
+  }
+  return `${text.slice(0, max - 3)}...`;
+}
+
+function terminalColumns(): number {
+  return process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 120;
 }
 
 function orchestraUrl(args: ParsedArgs): string {
@@ -1029,22 +1153,43 @@ function printHelp(): void {
   console.log(`orchestra
 
 Usage:
-  orchestra create <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
-  orchestra status
-  orchestra teardown <id|repo-name|workdir|all>
+  orchestra create <name> <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
+  orchestra status [workspace-name|--workspace NAME]
+  orchestra teardown <workspace-name>
+  orchestra remove <id>
+  orchestra ls
+  orchestra standouts
   orchestra diff <id> [--out FILE]
   orchestra exec <id> "cmd"
   orchestra steer <id> "guidance"
   orchestra interrupt <id>
   orchestra monitor <id|workdir> [--follow]
+  orchestra approvals
+
+Debug:
+  orchestra run "prompt" [--cwd DIR]
+  orchestra start [--cwd DIR] [--name NAME]
+  orchestra send <thread-id> "prompt"
+  orchestra list [--cwd DIR] [--archived] [--limit N]
+  orchestra read <id> [--json]
+  orchestra turn <id>
+  orchestra tail <id>
+  orchestra thread-read <thread-id>
+  orchestra thread-steer <thread-id> <turn-id> "guidance"
+  orchestra thread-interrupt <thread-id> [turn-id]
+  orchestra models
+  orchestra daemon <start|stop|status|enable-remote-control>
 
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
   --service-tier TIER       default | priority
+  --approval POLICY         untrusted | on-failure | on-request | never
+  --sandbox MODE            read-only | workspace-write | danger-full-access
   --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml
   --transport proxy|stdio   default: proxy (only used when no orchestra server is reachable)
   --db PATH                 default: ~/.orchestra/orchestra.db
   --url URL                 orchestra server, default: $ORCHESTRA_URL or http://127.0.0.1:5751
+  --workspace NAME          filter status output by workspace name
   --local                   skip the orchestra server and use a direct codex app-server transport
 
 create, steer, interrupt, teardown, and remove are sent to the running

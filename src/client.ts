@@ -50,7 +50,7 @@ export class OrchestraClient {
     return this.post("/repos/teardown", input);
   }
 
-  teardownTarget(input: TeardownRequest): Promise<TeardownRepoResponse> {
+  teardownWorkspace(input: TeardownRequest): Promise<TeardownRepoResponse> {
     return this.post("/teardown", input);
   }
 
@@ -82,7 +82,7 @@ export class OrchestraClient {
     return this.text(`/agents/${encodeURIComponent(id)}/diff`);
   }
 
-  steer(id: string, input: Omit<CreateAgentsRequest, "dir" | "count" | "prompt"> & { input: string }) {
+  steer(id: string, input: Omit<CreateAgentsRequest, "name" | "dir" | "count" | "prompt"> & { input: string }) {
     return this.post(`/agents/${encodeURIComponent(id)}/steer`, input);
   }
 

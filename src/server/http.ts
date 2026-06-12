@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import type { AgentEvent, Json } from "../domain/types";
+import type { AgentEvent, Approval, Json, ManagedAgentSummary } from "../domain/types";
 import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
 import { ORCHESTRA_API_ROUTES } from "./api";
 
@@ -53,9 +53,11 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
   }
 
   if (request.method === "GET" && url.pathname === "/status") {
+    const workspace = workspaceNameParam(url);
+    const agents = filterByWorkspaceName(deps.store.listManagedAgentSummaries(), workspace);
     return jsonResponse({
-      agents: deps.store.listManagedAgentSummaries(),
-      approvals: deps.store.listPendingApprovals(),
+      agents,
+      approvals: filterApprovalsByAgents(deps.store.listPendingApprovals(), agents, workspace),
       rateLimits: deps.manager.rateLimits ?? null,
     });
   }
@@ -105,7 +107,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "POST" && url.pathname === "/teardown") {
     const body = await readBody(request);
-    return jsonResponse({ agents: await deps.workspace.teardownTarget(requiredString(body.target, "target")) });
+    return jsonResponse({ agents: await deps.workspace.teardownWorkspace(requiredString(body.workspace, "workspace")) });
   }
 
   if (request.method === "POST" && url.pathname === "/diff") {
@@ -114,7 +116,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
   }
 
   if (request.method === "GET" && url.pathname === "/standouts") {
-    return textResponse(deps.workspace.standouts());
+    return textResponse(deps.workspace.standouts(workspaceNameParam(url)));
   }
 
   if (request.method === "GET" && url.pathname === "/agents") {
@@ -123,10 +125,14 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "POST" && url.pathname === "/agents") {
     const body = await readBody(request);
-    const prompt = requiredString(body.prompt, "prompt");
+    const name = requiredString(body.name, "name");
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
-      count: typeof body.count === "number" ? body.count : 1,
-      prompt,
+      workspaceName: name,
+      count: typeof body.count === "number" ? body.count : undefined,
+      prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+      sharedPrompt: typeof body.sharedPrompt === "string" ? body.sharedPrompt : typeof body.shared_prompt === "string" ? body.shared_prompt : undefined,
+      promptTemplate: typeof body.promptTemplate === "string" ? body.promptTemplate : typeof body.prompt_template === "string" ? body.prompt_template : undefined,
+      agents: focusedAgents(body.agents),
       onComplete: typeof body.onComplete === "string" ? body.onComplete : typeof body.on_complete === "string" ? body.on_complete : undefined,
       model: typeof body.model === "string" ? body.model : undefined,
       serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
@@ -253,6 +259,21 @@ function agentIds(body: Record<string, unknown>): string[] {
   throw new Error("agent id or agents array is required");
 }
 
+function focusedAgents(value: unknown): Array<{ focus: string }> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("agents must be an array");
+  }
+  return value.map((agent, index) => {
+    if (!agent || typeof agent !== "object" || !("focus" in agent) || typeof agent.focus !== "string") {
+      throw new Error(`agents[${index}].focus is required`);
+    }
+    return { focus: agent.focus };
+  });
+}
+
 function approvalPolicy(value: unknown) {
   return value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never" ? value : undefined;
 }
@@ -267,6 +288,29 @@ function serviceTier(value: unknown) {
 
 function configScope(value: unknown): ConfigScope {
   return value === "local" ? "local" : "global";
+}
+
+function workspaceNameParam(url: URL): string | undefined {
+  return url.searchParams.get("workspace") ?? url.searchParams.get("workspaceName") ?? undefined;
+}
+
+function filterByWorkspaceName(agents: ManagedAgentSummary[], workspace: string | undefined): ManagedAgentSummary[] {
+  if (!workspace) {
+    return agents;
+  }
+  return agents.filter((agent) => sameWorkspaceName(agent.workspaceName, workspace));
+}
+
+function filterApprovalsByAgents(approvals: Approval[], agents: ManagedAgentSummary[], workspace: string | undefined): Approval[] {
+  if (!workspace) {
+    return approvals;
+  }
+  const threadIds = new Set(agents.map((agent) => agent.threadId));
+  return approvals.filter((approval) => approval.threadId !== undefined && threadIds.has(approval.threadId));
+}
+
+function sameWorkspaceName(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string): Response {
