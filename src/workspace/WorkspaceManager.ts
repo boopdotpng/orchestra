@@ -18,9 +18,32 @@ export type WorkspaceManagerOptions = {
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
   workspaceName: string;
   count?: number | undefined;
-  prompt: string;
+  prompt?: string | undefined;
+  sharedPrompt?: string | undefined;
+  promptTemplate?: string | undefined;
+  agents?: CreateAgentPrompt[] | undefined;
   onComplete?: string | undefined;
 };
+
+export type CreateAgentPrompt = {
+  focus: string;
+};
+
+type ResolvedAgentPrompt =
+  | {
+      type: "prompt";
+      prompt: string;
+      index: number;
+      count: number;
+    }
+  | {
+      type: "focused";
+      sharedPrompt: string;
+      focus: string;
+      promptTemplate?: string | undefined;
+      index: number;
+      count: number;
+    };
 
 type AgentDiffStats = {
   id: string;
@@ -69,10 +92,10 @@ export class WorkspaceManager {
       throw new Error("name is required");
     }
     const source = this.resolveCreateSource(dir);
-    const count = options.count ?? 1;
+    const prompts = resolveAgentPrompts(options);
     const agents: ManagedAgent[] = [];
-    for (let index = 0; index < count; index += 1) {
-      const agent = await this.createOne(source, { ...options, workspaceName });
+    for (const prompt of prompts) {
+      const agent = await this.createOne(source, { ...options, workspaceName }, prompt);
       agents.push(agent);
     }
     return agents;
@@ -322,7 +345,7 @@ export class WorkspaceManager {
       .sort((left, right) => right.cwd.length - left.cwd.length)[0];
   }
 
-  private async createOne(source: CreateSource, options: CreateAgentsOptions): Promise<ManagedAgent> {
+  private async createOne(source: CreateSource, options: CreateAgentsOptions, promptSpec: ResolvedAgentPrompt): Promise<ManagedAgent> {
     const id = uniqueAgentId((candidate) => !this.store.getManagedAgent(candidate));
     const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
     const cwd = join(runsRoot, basename(source.repo.path), id);
@@ -357,7 +380,7 @@ export class WorkspaceManager {
       onComplete: options.onComplete,
     };
     this.store.insertManagedAgent(managed);
-    const turn = await this.manager.startTurn(thread.threadId, options.prompt, {
+    const turn = await this.manager.startTurn(thread.threadId, renderAgentPrompt(promptSpec, { id, cwd, branch: managed.branch, dir: source.sourcePath, workspaceName: options.workspaceName }), {
       cwd,
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
@@ -528,6 +551,70 @@ function surfaceForFile(path: string): string {
 
 function surfaceSummary(surfaces: string[]): string {
   return surfaces.length ? surfaces.join(", ") : "no changed surfaces";
+}
+
+function resolveAgentPrompts(options: CreateAgentsOptions): ResolvedAgentPrompt[] {
+  if (options.agents !== undefined) {
+    if (!Array.isArray(options.agents)) {
+      throw new Error("agents must be an array");
+    }
+    if (!options.agents.length) {
+      throw new Error("agents must include at least one entry");
+    }
+    if (options.prompt !== undefined) {
+      throw new Error("prompt cannot be combined with agents");
+    }
+    if (options.count !== undefined && options.count !== options.agents.length) {
+      throw new Error("count must match agents length when agents are provided");
+    }
+    const sharedPrompt = requiredNonEmpty(options.sharedPrompt, "sharedPrompt");
+    return options.agents.map((agent, index) => ({
+      type: "focused",
+      sharedPrompt,
+      focus: requiredNonEmpty(agent.focus, "agents.focus"),
+      promptTemplate: options.promptTemplate,
+      index,
+      count: options.agents!.length,
+    }));
+  }
+
+  const prompt = requiredNonEmpty(options.prompt, "prompt");
+  const count = options.count ?? 1;
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error("count must be a positive integer");
+  }
+  return Array.from({ length: count }, (_, index) => ({
+    type: "prompt",
+    prompt,
+    index,
+    count,
+  }));
+}
+
+function renderAgentPrompt(prompt: ResolvedAgentPrompt, context: { id: string; cwd: string; branch: string; dir: string; workspaceName: string }): string {
+  if (prompt.type === "prompt") {
+    return prompt.prompt;
+  }
+  const template = prompt.promptTemplate ?? "{sharedPrompt}\n\nFocus:\n{focus}";
+  const values = new Map([
+    ["sharedPrompt", prompt.sharedPrompt],
+    ["focus", prompt.focus],
+    ["index", String(prompt.index + 1)],
+    ["count", String(prompt.count)],
+    ["workspace", context.workspaceName],
+    ["dir", context.dir],
+    ["id", context.id],
+    ["cwd", context.cwd],
+    ["branch", context.branch],
+  ]);
+  return template.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (match, key: string) => values.get(key) ?? match);
+}
+
+function requiredNonEmpty(value: string | undefined, name: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
 }
 
 function sameWorkspaceName(left: string, right: string): boolean {

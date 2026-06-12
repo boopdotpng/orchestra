@@ -97,6 +97,38 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("creates focused agents from shared prompt request", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "focused pass",
+        dir: repo,
+        sharedPrompt: "Second focused pass",
+        agents: [{ focus: "Fix reg 4" }, { focus: "Add tracepoints" }],
+      }),
+    );
+
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; workspaceName: string }> };
+    expect(created.agents).toHaveLength(2);
+    expect(created.agents.map((agent) => agent.workspaceName)).toEqual(["focused pass", "focused pass"]);
+    expect(backend.startedTurns.map((turn) => turn.input)).toEqual([
+      "Second focused pass\n\nFocus:\nFix reg 4",
+      "Second focused pass\n\nFocus:\nAdd tracepoints",
+    ]);
+
+    store.close();
+  });
+
   test("tears down managed agents for a repository", async () => {
     const root = tempRoot();
     const repo = join(root, "repo");
@@ -284,6 +316,7 @@ describe("Orchestra HTTP handler", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
+  startedTurns: Array<{ threadId: string; input: string }> = [];
   private threadCount = 0;
 
   async connect() {}
@@ -330,7 +363,8 @@ class FakeBackend implements CodexBackend {
   async unarchiveThread() {
     return {};
   }
-  async startTurn() {
+  async startTurn(threadId: string, input: string) {
+    this.startedTurns.push({ threadId, input });
     return { turn: { id: "turn-1", status: "inProgress" } };
   }
   async steerTurn() {

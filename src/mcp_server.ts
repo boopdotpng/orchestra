@@ -18,15 +18,30 @@ server.tool(
     "Each ManagedAgent includes id, repoId, workspaceName, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
     "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
-    "A name and prompt are required; create always starts the first turn so no dead idle agents are created.",
+    "Either provide prompt with optional n, or provide sharedPrompt with agents[{focus}] to start focused agents in one call.",
+    "create always starts the first turn so no dead idle agents are created.",
     `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
     "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
   ].join(" "),
   {
     name: z.string().min(1).describe("Required workspace/run name used to group these agents in the UI and status output."),
     dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
-    n: z.number().int().positive().default(1).describe("Number of agents to create. Values greater than 1 fan out and return multiple ids in agents[]."),
-    prompt: z.string().min(1).describe("Required first-turn prompt."),
+    n: z.number().int().positive().optional().describe("Number of agents to create when using prompt. Values greater than 1 fan out and return multiple ids in agents[]."),
+    prompt: z.string().min(1).optional().describe("First-turn prompt used for every created agent. Mutually exclusive with agents."),
+    sharedPrompt: z.string().min(1).optional().describe("Shared instructions used with agents[{focus}] focused fan-out."),
+    promptTemplate: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Optional template for focused fan-out. Placeholders: {sharedPrompt}, {focus}, {index}, {count}, {workspace}, {dir}, {id}, {cwd}, {branch}."),
+    agents: z
+      .array(
+        z.object({
+          focus: z.string().min(1).describe("Per-agent focus appended to sharedPrompt or inserted into promptTemplate."),
+        }),
+      )
+      .optional()
+      .describe("Focused agents to create in one call. Length determines count when provided."),
     onComplete: z.string().optional().describe("Optional shell command or webhook URL to run when each turn completes. The placeholders {id} and <id> are replaced with the agent id."),
     model: z.string().optional().describe(`Model override. Omit to use service config, defaulting to ${DEFAULT_MODEL}.`),
     serviceTier: z
@@ -34,7 +49,8 @@ server.tool(
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
   },
-  async ({ name, dir, n, prompt, onComplete, model, serviceTier }) => text(await post("/agents", { name, dir, count: n, prompt, onComplete, model, serviceTier })),
+  async ({ name, dir, n, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
+    text(await post("/agents", { name, dir, count: n, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
 );
 
 server.tool(

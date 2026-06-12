@@ -126,11 +126,13 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
   if (request.method === "POST" && url.pathname === "/agents") {
     const body = await readBody(request);
     const name = requiredString(body.name, "name");
-    const prompt = requiredString(body.prompt, "prompt");
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
       workspaceName: name,
-      count: typeof body.count === "number" ? body.count : 1,
-      prompt,
+      count: typeof body.count === "number" ? body.count : undefined,
+      prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+      sharedPrompt: typeof body.sharedPrompt === "string" ? body.sharedPrompt : typeof body.shared_prompt === "string" ? body.shared_prompt : undefined,
+      promptTemplate: typeof body.promptTemplate === "string" ? body.promptTemplate : typeof body.prompt_template === "string" ? body.prompt_template : undefined,
+      agents: focusedAgents(body.agents),
       onComplete: typeof body.onComplete === "string" ? body.onComplete : typeof body.on_complete === "string" ? body.on_complete : undefined,
       model: typeof body.model === "string" ? body.model : undefined,
       serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
@@ -255,6 +257,21 @@ function agentIds(body: Record<string, unknown>): string[] {
     return [body.id];
   }
   throw new Error("agent id or agents array is required");
+}
+
+function focusedAgents(value: unknown): Array<{ focus: string }> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("agents must be an array");
+  }
+  return value.map((agent, index) => {
+    if (!agent || typeof agent !== "object" || !("focus" in agent) || typeof agent.focus !== "string") {
+      throw new Error(`agents[${index}].focus is required`);
+    }
+    return { focus: agent.focus };
+  });
 }
 
 function approvalPolicy(value: unknown) {

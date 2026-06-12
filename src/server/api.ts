@@ -56,7 +56,12 @@ export type CreateAgentsRequest = {
   name: string;
   dir: string;
   count?: number;
-  prompt: string;
+  prompt?: string;
+  sharedPrompt?: string;
+  promptTemplate?: string;
+  agents?: Array<{
+    focus: string;
+  }>;
   onComplete?: string;
   model?: string;
   serviceTier?: ServiceTier;

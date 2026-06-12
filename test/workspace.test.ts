@@ -56,6 +56,36 @@ describe("WorkspaceManager", () => {
     store.close();
   });
 
+  test("creates focused agents from shared prompt and per-agent focus", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      workspaceName: "focused pass",
+      runsRoot: runs,
+      sharedPrompt: "Shared context",
+      promptTemplate: "{sharedPrompt}\n\nAgent {index}/{count}\nWorkspace {workspace}\nBranch {branch}\nCWD {cwd}\nFocus: {focus}",
+      agents: [{ focus: "Fix reg 4" }, { focus: "Add tracepoints" }],
+    });
+
+    expect(agents).toHaveLength(2);
+    expect(agents.every((agent) => agent.workspaceName === "focused pass")).toBe(true);
+    expect(backend.startedTurns[0]?.input).toBe(
+      `Shared context\n\nAgent 1/2\nWorkspace focused pass\nBranch orchestra/${agents[0]!.id}\nCWD ${agents[0]!.cwd}\nFocus: Fix reg 4`,
+    );
+    expect(backend.startedTurns[1]?.input).toBe(
+      `Shared context\n\nAgent 2/2\nWorkspace focused pass\nBranch orchestra/${agents[1]!.id}\nCWD ${agents[1]!.cwd}\nFocus: Add tracepoints`,
+    );
+
+    store.close();
+  });
+
   test("runs completion hook when a managed turn completes", async () => {
     const root = tempRoot();
     const source = join(root, "source");
