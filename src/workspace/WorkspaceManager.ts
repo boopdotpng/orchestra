@@ -352,6 +352,23 @@ export class WorkspaceManager {
     return agents;
   }
 
+  async teardownAgents(agentIds: string[]): Promise<ManagedAgent[]> {
+    const ids = [...new Set(agentIds.map((id) => id.trim().toLowerCase()).filter(Boolean))];
+    if (!ids.length) {
+      throw new Error("agents array is required");
+    }
+    for (const id of ids) {
+      if (!/^[0-9a-f]{4}$/.test(id)) {
+        throw new Error(`invalid agent id: ${id}`);
+      }
+    }
+    const agents = ids.map((id) => this.requiredAgent(id));
+    for (const agent of agents) {
+      await this.remove(agent.id);
+    }
+    return agents;
+  }
+
   async teardownTarget(target: string): Promise<ManagedAgent[]> {
     const trimmed = target.trim();
     if (trimmed === "all") {

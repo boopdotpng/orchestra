@@ -263,6 +263,45 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("tears down selected managed agents by id list", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "agent-list teardown",
+        dir: repo,
+        count: 3,
+        prompt: "work",
+      }),
+    );
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+
+    const teardownResponse = await handler(
+      jsonRequest("http://127.0.0.1/teardown", {
+        agents: [created.agents[0]!.id, created.agents[2]!.id],
+      }),
+    );
+    expect(teardownResponse.status).toBe(200);
+    const tornDown = (await teardownResponse.json()) as { agents: Array<{ id: string; cwd: string }> };
+    expect(tornDown.agents.map((agent) => agent.id)).toEqual([created.agents[0]!.id, created.agents[2]!.id]);
+    expect(existsSync(created.agents[0]!.cwd)).toBe(false);
+    expect(existsSync(created.agents[1]!.cwd)).toBe(true);
+    expect(existsSync(created.agents[2]!.cwd)).toBe(false);
+
+    const agentsResponse = await handler(new Request("http://127.0.0.1/agents"));
+    const remaining = (await agentsResponse.json()) as { agents: Array<{ id: string }> };
+    expect(remaining.agents.map((agent) => agent.id)).toEqual([created.agents[1]!.id]);
+
+    store.close();
+  });
+
   test("removes one managed agent by id", async () => {
     const root = tempRoot();
     const repo = join(root, "repo");

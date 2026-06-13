@@ -109,7 +109,15 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "POST" && url.pathname === "/teardown") {
     const body = await readBody(request);
-    return jsonResponse({ agents: await deps.workspace.teardownWorkspace(requiredString(body.workspace, "workspace")) });
+    const workspace = workspaceNameBody(body);
+    const agents = teardownAgentIds(body);
+    if (workspace && agents.length) {
+      throw new Error("teardown requires workspace or agents, not both");
+    }
+    if (workspace) {
+      return jsonResponse({ agents: await deps.workspace.teardownWorkspace(workspace) });
+    }
+    return jsonResponse({ agents: await deps.workspace.teardownAgents(agents) });
   }
 
   if (request.method === "POST" && url.pathname === "/diff") {
@@ -294,6 +302,21 @@ function optionalAgentIds(body: Record<string, unknown>): string[] {
     ids.push(body.id);
   }
   return ids;
+}
+
+function teardownAgentIds(body: Record<string, unknown>): string[] {
+  if (body.agents === undefined) {
+    return [];
+  }
+  if (!Array.isArray(body.agents)) {
+    throw new Error("agents must be an array");
+  }
+  return body.agents.map((value, index) => {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`agents[${index}] must be a 4-digit agent id`);
+    }
+    return value;
+  });
 }
 
 function workspaceNameBody(body: Record<string, unknown>): string | undefined {

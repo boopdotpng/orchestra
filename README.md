@@ -144,11 +144,10 @@ The MCP server talks to the local Orchestra HTTP service, so the systemd service
 MCP tools:
 
 - `register`: pin a source repo base commit.
-- `teardown`: remove Orchestra-managed agents and workspaces by exact workspace/run name.
+- `teardown`: remove Orchestra-managed agents and workspaces by exact workspace/run name or a list of 4-character agent ids.
 - `create`: create one or more isolated agent workspaces under a required workspace name. Always returns `{ "agents": [ManagedAgent, ...] }`, never a bare id; each `ManagedAgent` includes `id`, `repoId`, `workspaceName`, `repoPath`, `baseCommit`, `sourcePath`, optional `parentAgentId`, `cwd`, `branch`, `threadId`, optional `activeTurnId`, `status`, and `createdAt`. Agent ids are 4-character lowercase hex strings, and `n > 1` returns multiple ids in the same `agents` array.
 - `ls`: list managed agents.
 - `status`: show agents and pending approvals.
-- `remove`: remove one managed agent and its workspace by id.
 - `turn`: show current turn state and recent events for one agent.
 - `read`: write an agent transcript to `/tmp/orchestra` and return the path.
 - `diff`: return the Git diff for an agent workspace.
@@ -159,7 +158,7 @@ MCP tools:
 - `approve`: approve a pending request.
 - `deny`: deny a pending request.
 
-Agents persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with `remove` or `teardown`. The default MCP-backed service config is `model = "gpt-5.5"` and `serviceTier = "default"` unless config files override it; `reasoningEffort` is sent only when configured. New agents default to `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless the request overrides them. `steer` starts a new turn when the agent is idle, or interleaves guidance into the tracked active turn when it is running; `exec` is a separate workspace shell command and can run while a turn is active.
+Agents persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with `teardown`. The default MCP-backed service config is `model = "gpt-5.5"` and `serviceTier = "default"` unless config files override it; `reasoningEffort` is sent only when configured. New agents default to `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless the request overrides them. `steer` starts a new turn when the agent is idle, or interleaves guidance into the tracked active turn when it is running; `exec` is a separate workspace shell command and can run while a turn is active.
 
 Manual registration commands:
 

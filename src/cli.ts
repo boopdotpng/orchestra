@@ -212,8 +212,8 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
  */
 function turnOverrides(args: ParsedArgs): {
   model?: string;
-  serviceTier?: OrchestraConfig["serviceTier"];
-  reasoningEffort?: OrchestraConfig["reasoningEffort"];
+  serviceTier?: NonNullable<OrchestraConfig["serviceTier"]>;
+  reasoningEffort?: NonNullable<OrchestraConfig["reasoningEffort"]>;
   approvalPolicy?: ApprovalPolicy;
   sandbox?: SandboxMode;
 } {

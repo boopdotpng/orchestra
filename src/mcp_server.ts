@@ -86,9 +86,20 @@ server.tool(
 
 server.tool(
   "teardown",
-  "Destroy Orchestra-managed agents and their workspaces for an exact workspace/run name.",
-  { workspace: z.string().min(1).describe("Required exact workspace/run name to remove.") },
-  async ({ workspace }) => text(await post("/teardown", { workspace })),
+  "Destroy Orchestra-managed agents and their workspaces. Provide either an exact workspace/run name or a list of 4-character agent ids.",
+  {
+    workspace: z.string().min(1).optional().describe("Exact workspace/run name to remove."),
+    agents: z.array(z.string().regex(/^[0-9a-f]{4}$/i)).optional().describe("List of 4-character lowercase hex agent ids to remove."),
+  },
+  async ({ workspace, agents }) => {
+    if (workspace && agents?.length) {
+      throw new Error("teardown requires workspace or agents, not both");
+    }
+    if (!workspace && !agents?.length) {
+      throw new Error("teardown requires workspace or agents");
+    }
+    return text(await post("/teardown", { workspace, agents }));
+  },
 );
 
 server.tool(

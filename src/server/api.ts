@@ -93,7 +93,8 @@ export type TeardownRepoRequest = {
 };
 
 export type TeardownRequest = {
-  workspace: string;
+  workspace?: string;
+  agents?: string[];
 };
 
 export type BroadcastRequest = {
