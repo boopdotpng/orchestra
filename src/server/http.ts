@@ -3,7 +3,7 @@ import type { AgentManager } from "../manager/AgentManager";
 import type { OrchestraStore } from "../store/OrchestraStore";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import type { AgentEvent, Approval, Json, ManagedAgentSummary } from "../domain/types";
-import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
+import { loadOrchestraConfig, normalizeReasoningEffort, normalizeServiceTier, writeOrchestraConfig, type ConfigScope } from "../config";
 import { ORCHESTRA_API_ROUTES } from "./api";
 
 const UI_FILE = join(import.meta.dir, "..", "ui", "index.html");
@@ -73,6 +73,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
         model: typeof body.model === "string" ? body.model : undefined,
         fastMode: typeof body.fastMode === "boolean" ? body.fastMode : typeof body.fast_mode === "boolean" ? body.fast_mode : undefined,
         serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+        reasoningEffort: reasoningEffortPatch(body.reasoningEffort ?? body.reasoning_effort ?? body.model_reasoning_effort),
       },
       {
         scope: configScope(body.scope),
@@ -82,6 +83,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     deps.workspace.updateDefaults({
       model: config.model,
       serviceTier: config.serviceTier,
+      reasoningEffort: config.reasoningEffort,
     });
     return jsonResponse(config);
   }
@@ -127,6 +129,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
         agentIds: optionalAgentIds(body),
         model: typeof body.model === "string" ? body.model : undefined,
         serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+        reasoningEffort: reasoningEffort(body.reasoningEffort ?? body.reasoning_effort ?? body.model_reasoning_effort),
         approvalPolicy: approvalPolicy(body.approvalPolicy),
         sandbox: sandboxMode(body.sandbox),
       }),
@@ -151,6 +154,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
       onComplete: typeof body.onComplete === "string" ? body.onComplete : typeof body.on_complete === "string" ? body.on_complete : undefined,
       model: typeof body.model === "string" ? body.model : undefined,
       serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+      reasoningEffort: reasoningEffort(body.reasoningEffort ?? body.reasoning_effort ?? body.model_reasoning_effort),
       approvalPolicy: approvalPolicy(body.approvalPolicy),
       sandbox: sandboxMode(body.sandbox),
     });
@@ -170,6 +174,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
       return jsonResponse(await deps.workspace.steer(id, requiredString(body.input, "input"), {
         model: typeof body.model === "string" ? body.model : undefined,
         serviceTier: serviceTier(body.serviceTier ?? body.service_tier),
+        reasoningEffort: reasoningEffort(body.reasoningEffort ?? body.reasoning_effort ?? body.model_reasoning_effort),
         approvalPolicy: approvalPolicy(body.approvalPolicy),
         sandbox: sandboxMode(body.sandbox),
       }));
@@ -320,6 +325,14 @@ function sandboxMode(value: unknown) {
 
 function serviceTier(value: unknown) {
   return normalizeServiceTier(value);
+}
+
+function reasoningEffort(value: unknown) {
+  return normalizeReasoningEffort(value);
+}
+
+function reasoningEffortPatch(value: unknown) {
+  return value === null ? null : normalizeReasoningEffort(value);
 }
 
 function configScope(value: unknown): ConfigScope {

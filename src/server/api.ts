@@ -1,4 +1,4 @@
-import type { AgentEvent, Json, ManagedAgent, ManagedAgentSummary, RepoRegistration, ServiceTier } from "../domain/types";
+import type { AgentEvent, Json, ManagedAgent, ManagedAgentSummary, ReasoningEffort, RepoRegistration, ServiceTier } from "../domain/types";
 
 export type OrchestraApiRoute = {
   method: "GET" | "POST" | "PATCH";
@@ -43,6 +43,7 @@ export type ConfigResponse = {
   model: string;
   fastMode: boolean;
   serviceTier: ServiceTier;
+  reasoningEffort?: ReasoningEffort;
   sources: string[];
 };
 
@@ -50,6 +51,7 @@ export type ConfigUpdateRequest = {
   model?: string;
   fastMode?: boolean;
   serviceTier?: ServiceTier;
+  reasoningEffort?: ReasoningEffort | null;
   scope?: "global" | "local";
 };
 
@@ -67,6 +69,7 @@ export type CreateAgentsRequest = {
   onComplete?: string;
   model?: string;
   serviceTier?: ServiceTier;
+  reasoningEffort?: ReasoningEffort;
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
 };
@@ -103,6 +106,7 @@ export type BroadcastRequest = {
   id?: string;
   model?: string;
   serviceTier?: ServiceTier;
+  reasoningEffort?: ReasoningEffort;
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
 };

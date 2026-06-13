@@ -20,6 +20,7 @@ const manager = new AgentManager(backend, { store });
 const workspace = new WorkspaceManager(store, manager, {
   model: config.model,
   serviceTier: config.serviceTier,
+  reasoningEffort: config.reasoningEffort,
 });
 
 await manager.connect();

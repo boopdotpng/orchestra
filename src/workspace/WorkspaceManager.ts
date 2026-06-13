@@ -11,6 +11,7 @@ export type WorkspaceManagerOptions = {
   runsRoot?: string | undefined;
   model?: string | undefined;
   serviceTier?: StartAgentOptions["serviceTier"] | undefined;
+  reasoningEffort?: StartAgentOptions["reasoningEffort"] | undefined;
   approvalPolicy?: StartAgentOptions["approvalPolicy"] | undefined;
   sandbox?: StartAgentOptions["sandbox"] | undefined;
 };
@@ -88,7 +89,7 @@ export class WorkspaceManager {
   constructor(
     private readonly store: OrchestraStore,
     private readonly manager: AgentManager,
-    private defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier"> = {},
+    private defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier" | "reasoningEffort"> = {},
   ) {
     manager.onEvent((event) => {
       if (event.type === "turn.completed") {
@@ -97,7 +98,7 @@ export class WorkspaceManager {
     });
   }
 
-  updateDefaults(defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier">): void {
+  updateDefaults(defaults: Pick<WorkspaceManagerOptions, "model" | "serviceTier" | "reasoningEffort">): void {
     this.defaults = defaults;
   }
 
@@ -139,6 +140,7 @@ export class WorkspaceManager {
             cwd: agent.cwd,
             model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
             serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
+            reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
             approvalPolicy: options.approvalPolicy,
             sandbox: options.sandbox,
             personality: "friendly",
@@ -452,6 +454,7 @@ export class WorkspaceManager {
       name: options.workspaceName,
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
+      reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
       approvalPolicy: options.approvalPolicy ?? "never",
       sandbox: options.sandbox ?? "danger-full-access",
       personality: "friendly",
@@ -477,6 +480,7 @@ export class WorkspaceManager {
       cwd,
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
+      reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
       approvalPolicy: options.approvalPolicy,
       sandbox: options.sandbox,
       personality: "friendly",

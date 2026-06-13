@@ -12,11 +12,13 @@ export type ApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never"
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type Personality = "none" | "friendly" | "pragmatic";
 export type ServiceTier = "default" | "priority";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export type StartAgentOptions = {
   cwd?: string | undefined;
   model?: string | undefined;
   serviceTier?: ServiceTier | undefined;
+  reasoningEffort?: ReasoningEffort | undefined;
   name?: string | undefined;
   approvalPolicy?: ApprovalPolicy | undefined;
   sandbox?: SandboxMode | undefined;

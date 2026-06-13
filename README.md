@@ -97,6 +97,7 @@ Global config is installed to `~/.orchestra/config.toml`:
 ```toml
 model = "gpt-5.5"
 fast_mode = false
+reasoning_effort = "high"
 ```
 
 Workdir-local config is merged on top of global config, so a project can override your global defaults with a tiny `.orchestra` file:
@@ -104,14 +105,16 @@ Workdir-local config is merged on top of global config, so a project can overrid
 ```toml
 model = "gpt-5.5"
 fast_mode = true
+reasoning_effort = "medium"
 ```
 
 Config keys:
 
 - `model`: default model for new agents and turns.
 - `fast_mode`: `false` sends app-server `serviceTier: "default"`; `true` sends `serviceTier: "priority"`.
+- `reasoning_effort`: optional Orchestra-only reasoning override for managed agents and turns. Supported values are `low`, `medium`, `high`, and `xhigh`.
 
-You can also use `service_tier = "default"` or `service_tier = "priority"` if you want the app-server value to be explicit. CLI `--model` and `--service-tier` override the config for that command. MCP `create` and `steer` can also pass `model` or `serviceTier`; when omitted, the service config is used.
+You can also use `service_tier = "default"` or `service_tier = "priority"` if you want the app-server value to be explicit. CLI `--model`, `--service-tier`, and `--reasoning-effort` override the config for that command. MCP `create` and `steer` can also pass `model` or `serviceTier`; when omitted, the service config is used.
 
 Orchestra's own default permission posture is automatic and full-access: new agents use `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless a CLI flag or API request explicitly overrides them.
 
@@ -156,7 +159,7 @@ MCP tools:
 - `approve`: approve a pending request.
 - `deny`: deny a pending request.
 
-Agents persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with `remove` or `teardown`. The default MCP-backed service config is `model = "gpt-5.5"` and `serviceTier = "default"` unless config files override it; new agents default to `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless the request overrides them. `steer` starts a new turn when the agent is idle, or interleaves guidance into the tracked active turn when it is running; `exec` is a separate workspace shell command and can run while a turn is active.
+Agents persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with `remove` or `teardown`. The default MCP-backed service config is `model = "gpt-5.5"` and `serviceTier = "default"` unless config files override it; `reasoningEffort` is sent only when configured. New agents default to `approvalPolicy: "never"` and `sandbox: "danger-full-access"` unless the request overrides them. `steer` starts a new turn when the agent is idle, or interleaves guidance into the tracked active turn when it is running; `exec` is a separate workspace shell command and can run while a turn is active.
 
 Manual registration commands:
 
@@ -177,6 +180,7 @@ Global options:
 
 - `--model MODEL`: model for new threads or turns. Default: `gpt-5.5`.
 - `--service-tier TIER`: app-server service tier, `default` or `priority`.
+- `--reasoning-effort LEVEL`: Orchestra-only reasoning effort, `low`, `medium`, `high`, or `xhigh`.
 - `--config PATH`: load config from a specific TOML file.
 - `--transport proxy|stdio`: Codex app-server transport. Default: `proxy`.
 - `--db PATH`: SQLite database path. Default: `~/.orchestra/orchestra.db`.

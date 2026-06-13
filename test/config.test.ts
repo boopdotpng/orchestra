@@ -19,12 +19,13 @@ describe("orchestra config", () => {
   test("loads model and fast mode from toml", () => {
     const root = tempRoot();
     const path = join(root, "orchestra.toml");
-    writeFileSync(path, 'model = "gpt-6"\nfast_mode = true\n');
+    writeFileSync(path, 'model = "gpt-6"\nfast_mode = true\nreasoning_effort = "high"\n');
 
     expect(loadOrchestraConfig({ path })).toEqual({
       model: "gpt-6",
       serviceTier: "priority",
       fastMode: true,
+      reasoningEffort: "high",
       sources: [path],
     });
   });
@@ -37,6 +38,7 @@ describe("orchestra config", () => {
       model: "gpt-5.5",
       serviceTier: "default",
       fastMode: false,
+      reasoningEffort: undefined,
       sources: [path],
     });
   });
@@ -54,6 +56,21 @@ describe("orchestra config", () => {
     expect(config.model).toBe("local-model");
     expect(config.serviceTier).toBe("priority");
     expect(config.sources).toEqual([join(home, ".orchestra", "config.toml"), join(cwd, ".orchestra")]);
+  });
+
+  test("writes and clears reasoning effort", () => {
+    const root = tempRoot();
+    const cwd = join(root, "project");
+    run(["mkdir", "-p", cwd]);
+    process.env.HOME = join(root, "home");
+
+    let config = writeOrchestraConfig({ model: "gpt-5.5", reasoningEffort: "high" }, { scope: "global", cwd });
+    expect(config.reasoningEffort).toBe("high");
+    expect(loadOrchestraConfig({ cwd }).reasoningEffort).toBe("high");
+
+    config = writeOrchestraConfig({ reasoningEffort: null }, { scope: "global", cwd });
+    expect(config.reasoningEffort).toBeUndefined();
+    expect(loadOrchestraConfig({ cwd }).reasoningEffort).toBeUndefined();
   });
 
   test("accepts explicit service tier aliases", () => {

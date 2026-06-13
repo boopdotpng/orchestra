@@ -6,11 +6,13 @@ export const DEFAULT_MODEL = "gpt-5.5";
 export const DEFAULT_SERVICE_TIER = "default";
 
 export type ServiceTier = "default" | "priority";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export type OrchestraConfig = {
   model: string;
   serviceTier: ServiceTier;
   fastMode: boolean;
+  reasoningEffort?: ReasoningEffort | undefined;
   sources: string[];
 };
 
@@ -18,6 +20,7 @@ export type OrchestraConfigPatch = {
   model?: string | undefined;
   fastMode?: boolean | undefined;
   serviceTier?: ServiceTier | undefined;
+  reasoningEffort?: ReasoningEffort | null | undefined;
 };
 
 export type ConfigScope = "global" | "local";
@@ -35,6 +38,7 @@ export function loadOrchestraConfig(options: { path?: string | undefined; cwd?: 
     model,
     serviceTier,
     fastMode: serviceTier === "priority",
+    reasoningEffort: raw.reasoningEffort ?? undefined,
     sources,
   };
 }
@@ -80,6 +84,17 @@ export function normalizeServiceTier(value: unknown): ServiceTier | undefined {
   throw new Error(`invalid service tier: ${value}`);
 }
 
+export function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh") {
+    return normalized;
+  }
+  throw new Error(`invalid reasoning effort: ${value}`);
+}
+
 function resolveConfigSources(options: { path?: string | undefined; cwd?: string | undefined }): string[] {
   const explicit = options.path ?? process.env.ORCHESTRA_CONFIG;
   if (explicit) {
@@ -104,10 +119,14 @@ function parseConfigFile(path: string): OrchestraConfigPatch {
   const model = stringValue(parsed.model);
   const explicit = parsed.service_tier ?? parsed.serviceTier;
   const explicitTier = normalizeServiceTier(explicit);
+  const reasoningEffort = normalizeReasoningEffort(parsed.reasoning_effort ?? parsed.reasoningEffort ?? parsed.model_reasoning_effort);
   const fastMode = parsed.fast_mode ?? parsed.fastMode;
   const patch: OrchestraConfigPatch = {};
   if (model) {
     patch.model = model;
+  }
+  if (reasoningEffort) {
+    patch.reasoningEffort = reasoningEffort;
   }
   if (explicitTier) {
     patch.serviceTier = explicitTier;
@@ -143,6 +162,9 @@ function configToToml(config: OrchestraConfigPatch): string {
     lines.push(`fast_mode = ${config.fastMode ? "true" : "false"}`);
   } else if (config.serviceTier) {
     lines.push(`service_tier = ${JSON.stringify(config.serviceTier)}`);
+  }
+  if (config.reasoningEffort) {
+    lines.push(`reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`);
   }
   return `${lines.join("\n")}\n`;
 }

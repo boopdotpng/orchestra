@@ -28,6 +28,7 @@ describe("WorkspaceManager", () => {
     const workspace = new WorkspaceManager(store, manager, {
       model: "gpt-6",
       serviceTier: "priority",
+      reasoningEffort: "high",
     });
     initGitRepo(source);
 
@@ -47,6 +48,7 @@ describe("WorkspaceManager", () => {
     expect(git(agent.cwd, ["branch", "--show-current"])).toBe(`orchestra/${agent.id}`);
     expect(backend.startedThreads[0]?.model).toBe("gpt-6");
     expect(backend.startedThreads[0]?.serviceTier).toBe("priority");
+    expect(backend.startedThreads[0]?.reasoningEffort).toBe("high");
     expect(backend.startedThreads[0]?.approvalPolicy).toBe("never");
     expect(backend.startedThreads[0]?.sandbox).toBe("danger-full-access");
     expect(backend.threadNames[0]).toEqual({ threadId: "thread-1", name: "source cleanup" });
@@ -428,11 +430,12 @@ class FakeBackend implements CodexBackend {
     name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
+    reasoningEffort?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
   }> = [];
   threadNames: Array<{ threadId: string; name: string }> = [];
-  startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined }> = [];
+  startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined; reasoningEffort?: string | undefined }> = [];
   startThreadDelayMs = 0;
   private concurrentStartThreads = 0;
   maxConcurrentStartThreads = 0;
@@ -454,6 +457,7 @@ class FakeBackend implements CodexBackend {
     name?: string | undefined;
     model?: string | undefined;
     serviceTier?: string | undefined;
+    reasoningEffort?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
   }) {
@@ -500,8 +504,8 @@ class FakeBackend implements CodexBackend {
   async unarchiveThread() {
     return {};
   }
-  async startTurn(threadId: string, input: string, options: { model?: string | undefined; serviceTier?: string | undefined } = {}) {
-    this.startedTurns.push({ threadId, input, model: options.model, serviceTier: options.serviceTier });
+  async startTurn(threadId: string, input: string, options: { model?: string | undefined; serviceTier?: string | undefined; reasoningEffort?: string | undefined } = {}) {
+    this.startedTurns.push({ threadId, input, model: options.model, serviceTier: options.serviceTier, reasoningEffort: options.reasoningEffort });
     return { turn: { id: `turn-${this.startedTurns.length}`, status: "inProgress" } };
   }
   async steerTurn() {

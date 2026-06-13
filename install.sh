@@ -84,6 +84,7 @@ if [[ ! -f "$HOME/.orchestra/config.toml" ]]; then
   cat > "$HOME/.orchestra/config.toml" <<'EOF'
 model = "gpt-5.5"
 fast_mode = false
+reasoning_effort = "high"
 EOF
   echo "  -> wrote default config: $HOME/.orchestra/config.toml"
 else

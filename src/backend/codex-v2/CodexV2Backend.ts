@@ -73,6 +73,7 @@ export class CodexV2Backend implements CodexBackend {
       cwd: options.cwd ?? null,
       model: options.model ?? null,
       serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
+      ...(options.reasoningEffort ? { config: { model_reasoning_effort: options.reasoningEffort } } : {}),
       approvalPolicy: (options.approvalPolicy ?? "never") as AskForApproval,
       sandbox: (options.sandbox ?? "danger-full-access") as WireSandboxMode,
       personality: (options.personality ?? "friendly") as WirePersonality,
@@ -89,6 +90,7 @@ export class CodexV2Backend implements CodexBackend {
       cwd: options.cwd ?? null,
       model: options.model ?? null,
       serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
+      ...(options.reasoningEffort ? { config: { model_reasoning_effort: options.reasoningEffort } } : {}),
       approvalPolicy: (options.approvalPolicy ?? null) as AskForApproval | null,
       sandbox: (options.sandbox ?? null) as WireSandboxMode | null,
       personality: (options.personality ?? null) as WirePersonality | null,
@@ -140,6 +142,7 @@ export class CodexV2Backend implements CodexBackend {
       cwd: options.cwd ?? null,
       model: options.model ?? null,
       serviceTier: options.serviceTier ?? DEFAULT_SERVICE_TIER,
+      ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
       approvalPolicy: (options.approvalPolicy ?? null) as AskForApproval | null,
       personality: (options.personality ?? null) as WirePersonality | null,
     };

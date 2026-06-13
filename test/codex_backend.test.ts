@@ -57,18 +57,21 @@ describe("CodexV2Backend", () => {
     process.env.ORCHESTRA_CAPTURE = capture;
 
     await backend.connect();
-    await backend.startThread({ cwd: root, model: "gpt-5.5", serviceTier: "priority" });
-    await backend.resumeThread("thread-1", { cwd: root, model: "gpt-5.5", serviceTier: "priority" });
-    await backend.startTurn("thread-1", "do the thing", { model: "gpt-5.5", serviceTier: "priority" });
+    await backend.startThread({ cwd: root, model: "gpt-5.5", serviceTier: "priority", reasoningEffort: "high" });
+    await backend.resumeThread("thread-1", { cwd: root, model: "gpt-5.5", serviceTier: "priority", reasoningEffort: "high" });
+    await backend.startTurn("thread-1", "do the thing", { model: "gpt-5.5", serviceTier: "priority", reasoningEffort: "high" });
     await backend.close();
 
     const messages = readFileSync(capture, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { method: string; params: { serviceTier?: string } });
+      .map((line) => JSON.parse(line) as { method: string; params: { serviceTier?: string; config?: { model_reasoning_effort?: string }; effort?: string } });
     expect(messages.find((message) => message.method === "thread/start")?.params.serviceTier).toBe("priority");
+    expect(messages.find((message) => message.method === "thread/start")?.params.config?.model_reasoning_effort).toBe("high");
     expect(messages.find((message) => message.method === "thread/resume")?.params.serviceTier).toBe("priority");
+    expect(messages.find((message) => message.method === "thread/resume")?.params.config?.model_reasoning_effort).toBe("high");
     expect(messages.find((message) => message.method === "turn/start")?.params.serviceTier).toBe("priority");
+    expect(messages.find((message) => message.method === "turn/start")?.params.effort).toBe("high");
   });
 
   test("surfaces child stderr when the app-server exits", async () => {

@@ -8,7 +8,7 @@ import { OrchestraClient } from "./client";
 import { AgentManager } from "./manager/AgentManager";
 import { OrchestraStore } from "./store/OrchestraStore";
 import { expandHome, readPromptFile, WorkspaceManager } from "./workspace/WorkspaceManager";
-import { DEFAULT_MODEL, loadOrchestraConfig, normalizeServiceTier, type OrchestraConfig } from "./config";
+import { DEFAULT_MODEL, loadOrchestraConfig, normalizeReasoningEffort, normalizeServiceTier, type OrchestraConfig } from "./config";
 import type { AgentEvent, Approval, ApprovalPolicy, ManagedAgent, ManagedAgentSummary, SandboxMode, StartAgentOptions } from "./domain/types";
 
 type ParsedArgs = {
@@ -62,6 +62,7 @@ async function main(): Promise<void> {
   const workspace = new WorkspaceManager(store, manager, {
     model: config.model,
     serviceTier: config.serviceTier,
+    reasoningEffort: config.reasoningEffort,
   });
 
   try {
@@ -212,15 +213,18 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
 function turnOverrides(args: ParsedArgs): {
   model?: string;
   serviceTier?: OrchestraConfig["serviceTier"];
+  reasoningEffort?: OrchestraConfig["reasoningEffort"];
   approvalPolicy?: ApprovalPolicy;
   sandbox?: SandboxMode;
 } {
   const serviceTier = normalizeServiceTier(args.flags["service-tier"]);
+  const effort = normalizeReasoningEffort(args.flags["reasoning-effort"]);
   const approval = approvalPolicy(args.flags.approval);
   const sandbox = sandboxMode(args.flags.sandbox);
   return {
     ...(typeof args.flags.model === "string" ? { model: args.flags.model } : {}),
     ...(serviceTier ? { serviceTier } : {}),
+    ...(effort ? { reasoningEffort: effort } : {}),
     ...(approval ? { approvalPolicy: approval } : {}),
     ...(sandbox ? { sandbox } : {}),
   };
@@ -240,6 +244,7 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
     count: flagNumber(args.flags.n) ?? 1,
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
+    reasoningEffort: reasoningEffortFlag(args, config),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
   };
@@ -627,6 +632,7 @@ function startOptions(args: ParsedArgs, config: OrchestraConfig): StartAgentOpti
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : process.cwd(),
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
+    reasoningEffort: reasoningEffortFlag(args, config),
     name: typeof args.flags.name === "string" ? args.flags.name : undefined,
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
@@ -639,6 +645,7 @@ function sendOptions(args: ParsedArgs, config: OrchestraConfig) {
     cwd: typeof args.flags.cwd === "string" ? resolve(args.flags.cwd) : undefined,
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
+    reasoningEffort: reasoningEffortFlag(args, config),
     approvalPolicy: approvalPolicy(args.flags.approval),
     sandbox: sandboxMode(args.flags.sandbox),
     personality: "friendly" as const,
@@ -651,6 +658,10 @@ function modelFlag(args: ParsedArgs, config: OrchestraConfig): string {
 
 function serviceTierFlag(args: ParsedArgs, config: OrchestraConfig): OrchestraConfig["serviceTier"] {
   return normalizeServiceTier(args.flags["service-tier"]) ?? config.serviceTier;
+}
+
+function reasoningEffortFlag(args: ParsedArgs, config: OrchestraConfig): OrchestraConfig["reasoningEffort"] {
+  return normalizeReasoningEffort(args.flags["reasoning-effort"]) ?? config.reasoningEffort;
 }
 
 function promptFlag(args: ParsedArgs): string | undefined {
@@ -1183,6 +1194,7 @@ Debug:
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
   --service-tier TIER       default | priority
+  --reasoning-effort LEVEL  low | medium | high | xhigh
   --approval POLICY         untrusted | on-failure | on-request | never
   --sandbox MODE            read-only | workspace-write | danger-full-access
   --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml

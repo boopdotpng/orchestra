@@ -4,6 +4,7 @@ import type {
   BackendServerRequest,
   Json,
   Personality,
+  ReasoningEffort,
   SandboxMode,
   ServiceTier,
   StartAgentOptions,
@@ -14,6 +15,7 @@ export type SendTurnOptions = {
   cwd?: string | undefined;
   model?: string | undefined;
   serviceTier?: ServiceTier | undefined;
+  reasoningEffort?: ReasoningEffort | undefined;
   approvalPolicy?: ApprovalPolicy | undefined;
   sandbox?: SandboxMode | undefined;
   personality?: Personality | undefined;
