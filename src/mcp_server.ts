@@ -135,7 +135,7 @@ server.tool(
   "Run a shell command in an agent workspace. This is independent of the agent's Codex turn; it runs immediately in the workspace cwd and does not steer or block the agent's active turn.",
   {
     id: z.string().describe("4-character lowercase hex agent id returned by create."),
-    cmd: z.string().describe("Shell command to run with bash -lc in the agent workspace."),
+    cmd: z.string().describe("Shell command to run with bash -c in the agent workspace."),
   },
   async ({ id, cmd }) => text(await post(`/agents/${encodeURIComponent(id)}/exec`, { cmd })),
 );

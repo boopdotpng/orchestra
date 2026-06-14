@@ -163,6 +163,48 @@ describe("OrchestraStore", () => {
     store.close();
   });
 
+  test("managed summaries only parse bounded recent events", () => {
+    const store = new OrchestraStore(dbPath);
+    const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });
+    store.insertManagedAgent({
+      id: "a3f1",
+      repoId: repo.id,
+      workspaceName: "summary test",
+      cwd: "/run/a3f1",
+      branch: "orchestra/a3f1",
+      threadId: "thread-1",
+      activeTurnId: "turn-1",
+      status: "running",
+      createdAt: 1,
+    });
+    store.db
+      .query("INSERT INTO events (thread_id, turn_id, method, payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?)")
+      .run("thread-1", "turn-1", "bad.old", "{", 1);
+    store.applyEvent({
+      type: "turn.started",
+      threadId: "thread-1",
+      turn: { threadId: "thread-1", turnId: "turn-1", status: "inProgress" },
+    });
+    for (let index = 0; index < 250; index += 1) {
+      store.applyEvent({
+        type: "stream.agent",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "item-1",
+        delta: "x",
+      });
+    }
+
+    const summary = store.listManagedAgentSummaries()[0];
+
+    expect(summary?.turnCount).toBe(1);
+    expect(summary?.lastTurnSummary).toContain("inProgress");
+    expect(summary?.lastTurnSummary).toContain("turn-1");
+    expect(summary?.lastAssistantMessageTail).toContain("x");
+
+    store.close();
+  });
+
   test("indexes generic notification events by nested params thread id", () => {
     const store = new OrchestraStore(dbPath);
     store.applyEvent({
@@ -179,6 +221,61 @@ describe("OrchestraStore", () => {
     const events = store.listEvents("thread-tool", 10);
     expect(events).toHaveLength(1);
     expect(JSON.stringify(events[0])).toContain("item/mcpToolCall/progress");
+
+    store.close();
+  });
+
+  test("deleting a managed agent clears its persisted runtime state", () => {
+    const store = new OrchestraStore(dbPath);
+    const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });
+    store.insertManagedAgent({
+      id: "a3f1",
+      repoId: repo.id,
+      workspaceName: "cleanup test",
+      cwd: "/run/a3f1",
+      branch: "orchestra/a3f1",
+      threadId: "thread-1",
+      activeTurnId: "turn-1",
+      status: "running",
+      createdAt: 1,
+    });
+    store.applyEvent({
+      type: "agent.started",
+      agent: { threadId: "thread-1", status: "active", activeTurnId: "turn-1" },
+    });
+    store.applyEvent({
+      type: "turn.started",
+      threadId: "thread-1",
+      turn: { threadId: "thread-1", turnId: "turn-1", status: "inProgress" },
+    });
+    store.applyEvent({
+      type: "stream.agent",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      delta: "hello",
+    });
+    store.applyEvent({
+      type: "approval.requested",
+      approval: {
+        requestId: 7,
+        method: "item/commandExecution/requestApproval",
+        kind: "command",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        params: {},
+        createdAtMs: 1,
+      },
+    });
+
+    store.deleteManagedAgent("a3f1");
+
+    expect(store.getManagedAgent("a3f1")).toBeUndefined();
+    expect(store.getAgent("thread-1")).toBeUndefined();
+    expect(store.getTurn("turn-1")).toBeUndefined();
+    expect(store.listEvents("thread-1")).toHaveLength(0);
+    expect(store.listPendingApprovals()).toHaveLength(0);
+    expect(store.listRepos()).toHaveLength(0);
 
     store.close();
   });

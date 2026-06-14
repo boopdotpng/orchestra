@@ -116,6 +116,34 @@ describe("WorkspaceManager", () => {
     store.close();
   });
 
+  test("broadcast steers target agents concurrently", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    backend.steerDelayMs = 30;
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const agents = await workspace.create(source, {
+      workspaceName: "broadcast test",
+      runsRoot: runs,
+      count: 3,
+      prompt: "hello agent",
+    });
+
+    const response = await workspace.broadcast("shared update", { workspaceName: "broadcast test" });
+
+    expect(response.results.every((result) => result.ok)).toBe(true);
+    expect(backend.steeredTurns.map((turn) => turn.input)).toEqual(["shared update", "shared update", "shared update"]);
+    expect(backend.maxConcurrentSteers).toBe(3);
+    expect(response.results.map((result) => result.id)).toEqual(agents.map((agent) => agent.id));
+
+    store.close();
+  });
+
   test("runs completion hook when a managed turn completes", async () => {
     const root = tempRoot();
     const source = join(root, "source");
@@ -385,6 +413,8 @@ describe("WorkspaceManager", () => {
     expect(removed.map((candidate) => candidate.id)).toEqual([agent.id]);
     expect(store.getManagedAgent(agent.id)).toBeUndefined();
     expect(existsSync(agent.cwd)).toBe(false);
+    expect(existsSync(join(runs, "bh-tournament"))).toBe(false);
+    expect(existsSync(runs)).toBe(false);
 
     store.close();
   });
@@ -466,9 +496,13 @@ class FakeBackend implements CodexBackend {
   }> = [];
   threadNames: Array<{ threadId: string; name: string }> = [];
   startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined; reasoningEffort?: string | undefined }> = [];
+  steeredTurns: Array<{ threadId: string; turnId: string; input: string }> = [];
   startThreadDelayMs = 0;
+  steerDelayMs = 0;
   private concurrentStartThreads = 0;
+  private concurrentSteers = 0;
   maxConcurrentStartThreads = 0;
+  maxConcurrentSteers = 0;
   private threadCount = 0;
 
   async connect() {}
@@ -538,8 +572,18 @@ class FakeBackend implements CodexBackend {
     this.startedTurns.push({ threadId, input, model: options.model, serviceTier: options.serviceTier, reasoningEffort: options.reasoningEffort });
     return { turn: { id: `turn-${this.startedTurns.length}`, status: "inProgress" } };
   }
-  async steerTurn() {
-    return {};
+  async steerTurn(threadId: string, turnId: string, input: string) {
+    this.concurrentSteers += 1;
+    this.maxConcurrentSteers = Math.max(this.maxConcurrentSteers, this.concurrentSteers);
+    try {
+      if (this.steerDelayMs > 0) {
+        await Bun.sleep(this.steerDelayMs);
+      }
+      this.steeredTurns.push({ threadId, turnId, input });
+      return {};
+    } finally {
+      this.concurrentSteers -= 1;
+    }
   }
   async interruptTurn() {
     return {};

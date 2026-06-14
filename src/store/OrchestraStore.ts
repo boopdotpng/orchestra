@@ -18,8 +18,11 @@ import type {
 
 type Row = Record<string, unknown>;
 
+const SUMMARY_EVENT_LIMIT = 200;
+
 export class OrchestraStore {
   readonly db: Database;
+  private readonly applyEventTx: (event: AgentEvent) => void;
 
   constructor(path = defaultDbPath()) {
     mkdirSync(dirname(path), { recursive: true });
@@ -27,6 +30,9 @@ export class OrchestraStore {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.migrate();
+    this.applyEventTx = this.db.transaction((event: AgentEvent) => {
+      this.applyEventInner(event);
+    });
   }
 
   close(): void {
@@ -121,6 +127,14 @@ export class OrchestraStore {
         on_complete TEXT,
         created_at INTEGER NOT NULL
       );
+
+      CREATE INDEX IF NOT EXISTS idx_events_thread_id_id ON events(thread_id, id);
+      CREATE INDEX IF NOT EXISTS idx_events_thread_id_created_at_ms ON events(thread_id, created_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_turns_thread_id_updated_at_ms ON turns(thread_id, updated_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_approvals_status_thread_id ON approvals(status, thread_id);
+      CREATE INDEX IF NOT EXISTS idx_approvals_thread_id_status ON approvals(thread_id, status);
+      CREATE INDEX IF NOT EXISTS idx_managed_agents_workspace_name ON managed_agents(workspace_name COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS idx_managed_agents_repo_id ON managed_agents(repo_id);
     `);
     this.addColumnIfMissing("managed_agents", "on_complete", "TEXT");
     this.addColumnIfMissing("managed_agents", "workspace_name", "TEXT");
@@ -130,6 +144,10 @@ export class OrchestraStore {
   }
 
   applyEvent(event: AgentEvent): void {
+    this.applyEventTx(event);
+  }
+
+  private applyEventInner(event: AgentEvent): void {
     this.recordEvent(event.type, event);
 
     switch (event.type) {
@@ -229,8 +247,15 @@ export class OrchestraStore {
     return rows.map(agentFromRow);
   }
 
-  listPendingApprovals(): Approval[] {
-    const rows = this.db.query("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at_ms ASC").all() as Row[];
+  listPendingApprovals(threadIds?: readonly string[]): Approval[] {
+    if (threadIds !== undefined && threadIds.length === 0) {
+      return [];
+    }
+    const rows = threadIds
+      ? (this.db
+          .query(`SELECT * FROM approvals WHERE status = 'pending' AND thread_id IN (${threadIds.map(() => "?").join(",")}) ORDER BY created_at_ms ASC`)
+          .all(...threadIds) as Row[])
+      : (this.db.query("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at_ms ASC").all() as Row[]);
     return rows.map(approvalFromRow);
   }
 
@@ -324,9 +349,49 @@ export class OrchestraStore {
     return rows.map(managedAgentFromRow);
   }
 
-  listManagedAgentSummaries(): ManagedAgentSummary[] {
+  listManagedAgentSummaries(workspaceName?: string | undefined): ManagedAgentSummary[] {
+    const workspace = workspaceName?.trim();
+    const workspaceFilter = workspace ? "WHERE managed_agents.workspace_name = ? COLLATE NOCASE" : "";
+    const rows = this.db
+      .query(
+        `SELECT
+          managed_agents.*,
+          repos.path AS repo_path,
+          COALESCE(managed_agents.base_commit, repos.base_commit) AS base_commit,
+          agents.token_usage_json AS agent_token_usage_json,
+          (
+            SELECT COUNT(*)
+            FROM turns
+            WHERE turns.thread_id = managed_agents.thread_id
+          ) AS turn_count,
+          (
+            SELECT MAX(created_at_ms)
+            FROM events
+            WHERE events.thread_id = managed_agents.thread_id
+          ) AS last_activity_at,
+          (
+            SELECT turn_id
+            FROM turns
+            WHERE turns.thread_id = managed_agents.thread_id
+            ORDER BY updated_at_ms DESC
+            LIMIT 1
+          ) AS last_turn_id,
+          (
+            SELECT status
+            FROM turns
+            WHERE turns.thread_id = managed_agents.thread_id
+            ORDER BY updated_at_ms DESC
+            LIMIT 1
+          ) AS last_turn_status
+         FROM managed_agents
+         JOIN repos ON repos.id = managed_agents.repo_id
+         LEFT JOIN agents ON agents.thread_id = managed_agents.thread_id
+         ${workspaceFilter}
+         ORDER BY managed_agents.created_at DESC`,
+      )
+      .all(...(workspace ? [workspace] : [])) as Row[];
     const pending = new Map<string, Approval[]>();
-    for (const approval of this.listPendingApprovals()) {
+    for (const approval of this.listPendingApprovals(rows.map((row) => String(row.thread_id)))) {
       if (!approval.threadId) {
         continue;
       }
@@ -334,16 +399,18 @@ export class OrchestraStore {
       approvals.push(approval);
       pending.set(approval.threadId, approvals);
     }
-    return this.listManagedAgents().map((agent) => {
-      const agentRow = this.getAgent(agent.threadId);
-      const events = this.listEvents(agent.threadId);
+    return rows.map((row) => {
+      const agent = managedAgentFromRow(row);
+      const events = this.listEvents(agent.threadId, SUMMARY_EVENT_LIMIT);
+      const lastMessage = tail(lastAssistantMessage(events));
+      const lastTurn = turnSummaryFromRow(row, agent.threadId);
       return {
         ...agent,
-        lastTurnSummary: lastTurnSummary(events),
-        lastAssistantMessageTail: tail(lastAssistantMessage(events)),
-        turnCount: this.turnCount(agent.threadId, events),
-        tokensUsed: tokensUsed(agentRow?.tokenUsage),
-        lastActivityAt: this.lastActivityAt(agent.threadId) ?? agent.createdAt * 1000,
+        lastTurnSummary: lastTurnSummary(events, lastMessage) ?? lastTurnSummaryFromTurn(lastTurn, tail(lastMessage, 160)),
+        lastAssistantMessageTail: lastMessage,
+        turnCount: turnCountFromRow(row) || this.turnCountFromEvents(events),
+        tokensUsed: tokensUsed(parseJson(row.agent_token_usage_json)),
+        lastActivityAt: optionalNumber(row.last_activity_at) ?? agent.createdAt * 1000,
         pendingApprovals: pending.get(agent.threadId) ?? [],
       };
     });
@@ -362,7 +429,21 @@ export class OrchestraStore {
   }
 
   deleteManagedAgent(id: string): void {
-    this.db.query("DELETE FROM managed_agents WHERE id = ?").run(id);
+    const row = this.db.query("SELECT repo_id, thread_id FROM managed_agents WHERE id = ?").get(id) as Row | undefined;
+    if (!row) {
+      return;
+    }
+    const repoId = Number(row.repo_id);
+    const threadId = String(row.thread_id);
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM approvals WHERE thread_id = ?").run(threadId);
+      this.db.query("DELETE FROM items WHERE thread_id = ?").run(threadId);
+      this.db.query("DELETE FROM turns WHERE thread_id = ?").run(threadId);
+      this.db.query("DELETE FROM events WHERE thread_id = ?").run(threadId);
+      this.db.query("DELETE FROM agents WHERE thread_id = ?").run(threadId);
+      this.db.query("DELETE FROM managed_agents WHERE id = ?").run(id);
+      this.db.query("DELETE FROM repos WHERE id = ? AND NOT EXISTS (SELECT 1 FROM managed_agents WHERE repo_id = ?)").run(repoId, repoId);
+    })();
   }
 
   resetTransientRuntimeState(): void {
@@ -382,17 +463,7 @@ export class OrchestraStore {
 
   getTurn(turnId: string): Turn | undefined {
     const row = this.db.query("SELECT * FROM turns WHERE turn_id = ?").get(turnId) as Row | undefined;
-    if (!row) {
-      return undefined;
-    }
-    return {
-      turnId,
-      threadId: String(row.thread_id),
-      status: (optionalString(row.status) ?? "inProgress") as Turn["status"],
-      diff: optionalString(row.diff),
-      plan: parseJson(row.plan_json),
-      raw: parseJson(row.raw_json),
-    };
+    return row ? turnFromRow(row) : undefined;
   }
 
   recordEvent(method: string, payload: Json): void {
@@ -560,18 +631,8 @@ export class OrchestraStore {
     }
   }
 
-  private turnCount(threadId: string, events: Json[]): number {
-    const row = this.db.query("SELECT COUNT(*) AS count FROM turns WHERE thread_id = ?").get(threadId) as Row | undefined;
-    const count = typeof row?.count === "number" ? row.count : Number(row?.count ?? 0);
-    if (count > 0) {
-      return count;
-    }
+  private turnCountFromEvents(events: Json[]): number {
     return new Set(events.map((event) => readNestedString(event, "turn", "turnId") ?? readString(event, "turnId")).filter(Boolean)).size;
-  }
-
-  private lastActivityAt(threadId: string): number | undefined {
-    const row = this.db.query("SELECT MAX(created_at_ms) AS last_activity_at FROM events WHERE thread_id = ?").get(threadId) as Row | undefined;
-    return optionalNumber(row?.last_activity_at);
   }
 }
 
@@ -587,7 +648,11 @@ function parseJson(value: unknown): Json | undefined {
   if (typeof value !== "string" || value.length === 0) {
     return undefined;
   }
-  return JSON.parse(value) as Json;
+  try {
+    return JSON.parse(value) as Json;
+  } catch {
+    return undefined;
+  }
 }
 
 function agentFromRow(row: Row): Agent {
@@ -679,6 +744,33 @@ function approvalFromRow(row: Row): Approval {
   };
 }
 
+function turnFromRow(row: Row): Turn {
+  return {
+    turnId: String(row.turn_id),
+    threadId: String(row.thread_id),
+    status: (optionalString(row.status) ?? "inProgress") as Turn["status"],
+    diff: optionalString(row.diff),
+    plan: parseJson(row.plan_json),
+    raw: parseJson(row.raw_json),
+  };
+}
+
+function turnSummaryFromRow(row: Row, threadId: string): Turn | undefined {
+  const turnId = optionalString(row.last_turn_id);
+  if (!turnId) {
+    return undefined;
+  }
+  return {
+    turnId,
+    threadId,
+    status: (optionalString(row.last_turn_status) ?? "inProgress") as Turn["status"],
+  };
+}
+
+function turnCountFromRow(row: Row): number {
+  return typeof row.turn_count === "number" ? row.turn_count : Number(row.turn_count ?? 0);
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -733,7 +825,7 @@ function lastAssistantMessage(events: Json[]): string | undefined {
   return latest || undefined;
 }
 
-function lastTurnSummary(events: Json[]): string | undefined {
+function lastTurnSummary(events: Json[], lastMessage?: string | undefined): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const type = readString(event, "type");
@@ -743,10 +835,17 @@ function lastTurnSummary(events: Json[]): string | undefined {
     const turn = asRecord(asRecord(event)?.turn);
     const status = readString(turn, "status") ?? (type === "turn.started" ? "inProgress" : "completed");
     const turnId = readString(turn, "turnId");
-    const message = tail(lastAssistantMessage(events.slice(0, index + 1)), 160);
+    const message = tail(lastMessage, 160);
     return [type === "turn.started" ? "started" : "completed", status, turnId, message].filter(Boolean).join(" · ");
   }
   return undefined;
+}
+
+function lastTurnSummaryFromTurn(turn: Turn | undefined, message: string | undefined): string | undefined {
+  if (!turn) {
+    return undefined;
+  }
+  return ["last", turn.status, turn.turnId, message].filter(Boolean).join(" · ");
 }
 
 function tail(text: string | undefined, max = 500): string | undefined {

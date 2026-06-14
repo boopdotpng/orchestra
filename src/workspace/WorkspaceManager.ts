@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -53,6 +53,8 @@ export type BroadcastAgentResult =
 export type BroadcastResponse = {
   results: BroadcastAgentResult[];
 };
+
+const BROADCAST_STEER_TIMEOUT_MS = 30_000;
 
 type ResolvedAgentPrompt =
   | {
@@ -150,28 +152,28 @@ export class WorkspaceManager {
 
   async broadcast(input: string, options: BroadcastOptions): Promise<BroadcastResponse> {
     const targets = this.broadcastTargets(options.workspaceName, options.agentIds);
-    const results: BroadcastAgentResult[] = [];
-    for (const target of targets) {
-      if (!target.agent) {
-        results.push({ id: target.id, ok: false, error: `unknown agent id: ${target.id}` });
-        continue;
-      }
-      try {
-        results.push({
-          id: target.agent.id,
-          workspaceName: target.agent.workspaceName,
-          ok: true,
-          result: await this.steer(target.agent.id, input, options),
-        });
-      } catch (error) {
-        results.push({
-          id: target.agent.id,
-          workspaceName: target.agent.workspaceName,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    const results = await Promise.all(
+      targets.map(async (target): Promise<BroadcastAgentResult> => {
+        if (!target.agent) {
+          return { id: target.id, ok: false, error: `unknown agent id: ${target.id}` };
+        }
+        try {
+          return {
+            id: target.agent.id,
+            workspaceName: target.agent.workspaceName,
+            ok: true,
+            result: await withTimeout(this.steer(target.agent.id, input, options), BROADCAST_STEER_TIMEOUT_MS, `broadcast to ${target.agent.id}`),
+          };
+        } catch (error) {
+          return {
+            id: target.agent.id,
+            workspaceName: target.agent.workspaceName,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }),
+    );
     return { results };
   }
 
@@ -259,7 +261,7 @@ export class WorkspaceManager {
 
   exec(id: string, command: string): { exitCode: number; output: string } {
     const agent = this.requiredAgent(id);
-    const proc = Bun.spawnSync(["bash", "-lc", command], {
+    const proc = Bun.spawnSync(["bash", "-c", command], {
       cwd: agent.cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -403,6 +405,7 @@ export class WorkspaceManager {
       await this.manager.interrupt(agent.threadId, agent.activeTurnId).catch(() => undefined);
     }
     rmSync(agent.cwd, { recursive: true, force: true });
+    pruneEmptyRunDirs(agent.cwd);
     this.store.deleteManagedAgent(agent.id);
     return agent;
   }
@@ -747,6 +750,21 @@ function formatTimestamp(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+function pruneEmptyRunDirs(cwd: string): void {
+  pruneEmptyDir(dirname(cwd));
+  pruneEmptyDir(dirname(dirname(cwd)));
+}
+
+function pruneEmptyDir(path: string): void {
+  try {
+    if (readdirSync(path).length === 0) {
+      rmdirSync(path);
+    }
+  } catch {
+    // Best effort cleanup; teardown should still succeed if pruning races or is denied.
+  }
+}
+
 async function copyReflink(source: string, dest: string): Promise<void> {
   if (existsSync(dest)) {
     throw new Error(`workspace already exists: ${dest}`);
@@ -816,6 +834,22 @@ async function mapWithConcurrency<T, U>(values: T[], concurrency: number, mapper
     }),
   );
   return results;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function resolveCreateConcurrency(value: number | undefined, count: number): number {

@@ -54,10 +54,11 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
 
   if (request.method === "GET" && url.pathname === "/status") {
     const workspace = workspaceNameParam(url);
-    const agents = filterByWorkspaceName(deps.store.listManagedAgentSummaries(), workspace);
+    const agents = deps.store.listManagedAgentSummaries(workspace);
+    const approvals = workspace ? deps.store.listPendingApprovals(agents.map((agent) => agent.threadId)) : deps.store.listPendingApprovals();
     return jsonResponse({
       agents,
-      approvals: filterApprovalsByAgents(deps.store.listPendingApprovals(), agents, workspace),
+      approvals: filterApprovalsByAgents(approvals, agents, workspace),
       rateLimits: deps.manager.rateLimits ?? null,
     });
   }
@@ -366,13 +367,6 @@ function workspaceNameParam(url: URL): string | undefined {
   return url.searchParams.get("workspace") ?? url.searchParams.get("workspaceName") ?? undefined;
 }
 
-function filterByWorkspaceName(agents: ManagedAgentSummary[], workspace: string | undefined): ManagedAgentSummary[] {
-  if (!workspace) {
-    return agents;
-  }
-  return agents.filter((agent) => sameWorkspaceName(agent.workspaceName, workspace));
-}
-
 function filterApprovalsByAgents(approvals: Approval[], agents: ManagedAgentSummary[], workspace: string | undefined): Approval[] {
   if (!workspace) {
     return approvals;
@@ -387,26 +381,62 @@ function sameWorkspaceName(left: string, right: string): boolean {
 
 function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string): Response {
   const threadId = agentId ? deps.workspace.requiredAgent(agentId).threadId : undefined;
+  const overview = !agentId && new URL(request.url).searchParams.get("overview") === "1";
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | undefined;
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const pending = new Map<string, AgentEvent>();
+
+  const clearFlushTimer = () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+    }
+  };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: unknown, type = "message") => {
         controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`));
       };
+      const flush = () => {
+        flushTimer = undefined;
+        for (const event of pending.values()) {
+          send(event);
+        }
+        pending.clear();
+      };
+      const sendOverview = (event: AgentEvent) => {
+        const eventThread = eventThreadId(event);
+        if (!eventThread) {
+          send(event);
+          return;
+        }
+        pending.set(eventThread, event);
+        if (!flushTimer) {
+          flushTimer = setTimeout(flush, 150);
+        }
+      };
       send({ type: "hello", scope: agentId ? "agent" : "all", agentId }, "hello");
       unsubscribe = deps.manager.onEvent((event) => {
         if (!threadId || eventThreadId(event) === threadId) {
-          send(event);
+          if (overview) {
+            sendOverview(event);
+          } else {
+            send(event);
+          }
         }
       });
       request.signal.addEventListener("abort", () => {
         unsubscribe?.();
+        clearFlushTimer();
+        pending.clear();
         controller.close();
       });
     },
     cancel() {
       unsubscribe?.();
+      clearFlushTimer();
+      pending.clear();
     },
   });
   return new Response(stream, {

@@ -837,18 +837,21 @@ function showAgent(id) {
   document.body.classList.add("show-detail");
   markSidebarSel();
   renderDetail();
+  syncStreams();
   if (prev !== id) { loadAgentDetail(id); loadDiff(id); }
 }
 function showRepo(path) {
   state.selected = null; state.repoView = path;
   document.body.classList.add("show-detail");
   markSidebarSel();
+  syncStreams();
   renderRepoView(true);
 }
 function showOverview() {
   state.selected = null; state.repoView = null;
   document.body.classList.remove("show-detail");
   markSidebarSel();
+  syncStreams();
   renderOverview();
 }
 function backToList() { history.back(); }
@@ -1515,14 +1518,45 @@ function extractModelNames(m) {
 }
 
 // ---------- live stream ----------
-let es;
+let overviewEs;
+let detailEs;
+let detailStreamId = null;
 function setConn(cls, text) { $("conn").className = "conn " + cls; $("connText").textContent = text; }
-function connectStream() {
-  es = new EventSource(API + "/events");
-  es.addEventListener("hello", () => setConn("live", "live"));
-  es.onopen = () => setConn("live", "live");
-  es.onerror = () => setConn("down", "reconnecting");
-  es.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch { return; } if (ev.type === "hello") return; handleLiveEvent(ev); };
+function shouldStream() { return document.visibilityState === "visible" && document.hasFocus(); }
+function closeStream(stream) { if (stream) { try { stream.close(); } catch {} } }
+function disconnectStreams() {
+  closeStream(overviewEs); overviewEs = null;
+  closeStream(detailEs); detailEs = null; detailStreamId = null;
+}
+function syncStreams() {
+  if (!shouldStream()) { disconnectStreams(); setConn("down", "paused"); return; }
+  if (!overviewEs || overviewEs.readyState === 2) connectOverviewStream();
+  if (state.selected) {
+    if (!detailEs || detailEs.readyState === 2 || detailStreamId !== state.selected) connectDetailStream(state.selected);
+  } else {
+    closeStream(detailEs); detailEs = null; detailStreamId = null;
+  }
+}
+function connectOverviewStream() {
+  closeStream(overviewEs);
+  overviewEs = new EventSource(API + "/events?overview=1");
+  overviewEs.addEventListener("hello", () => setConn("live", state.selected ? "live + detail" : "live"));
+  overviewEs.onopen = () => setConn("live", state.selected ? "live + detail" : "live");
+  overviewEs.onerror = () => setConn("down", "reconnecting");
+  overviewEs.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch { return; } if (ev.type === "hello") return; handleOverviewEvent(ev); };
+}
+function connectDetailStream(id) {
+  closeStream(detailEs);
+  detailStreamId = id;
+  detailEs = new EventSource(API + `/agents/${encodeURIComponent(id)}/events`);
+  detailEs.addEventListener("hello", () => setConn("live", "live + detail"));
+  detailEs.onopen = () => setConn("live", "live + detail");
+  detailEs.onerror = () => setConn("down", "reconnecting");
+  detailEs.onmessage = (e) => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.type === "hello") return;
+    handleDetailEvent(id, ev);
+  };
 }
 function eventAgentId(ev) {
   const tid = ev.threadId || ev.agent?.threadId || ev.approval?.threadId;
@@ -1530,10 +1564,16 @@ function eventAgentId(ev) {
   const a = state.agents.find((x) => x.threadId === tid);
   return a ? a.id : null;
 }
-function handleLiveEvent(ev) {
+function handleOverviewEvent(ev) {
   if (ev.type === "account.rateLimits") { state.rateLimits = ev.rateLimits || state.rateLimits; renderRateLimits(); return; }
   if (ev.type === "agent.started" || ev.type === "agent.status" || ev.type === "approval.requested" || ev.type === "approval.resolved") loadStatus();
   const id = eventAgentId(ev); if (!id) return;
+  noteLiveOutput(id, ev);
+  patchRow(id);
+  patchRepoCard(id);
+}
+function handleDetailEvent(id, ev) {
+  if (eventAgentId(ev) !== id) return;
   noteLiveOutput(id, ev);
   patchRow(id);
   patchRepoCard(id);
@@ -1545,6 +1585,15 @@ function handleLiveEvent(ev) {
     applyDetailEvent(id, ev); if (state.tab === "convo") renderPane();
   }
 }
+function handleStreamFocusChange() {
+  if (!shouldStream()) { disconnectStreams(); setConn("down", "paused"); return; }
+  loadStatus();
+  if (state.selected) loadAgentDetail(state.selected);
+  syncStreams();
+}
+document.addEventListener("visibilitychange", handleStreamFocusChange);
+window.addEventListener("focus", handleStreamFocusChange);
+window.addEventListener("blur", handleStreamFocusChange);
 
 // ---------- boot ----------
 await loadConfig();
@@ -1558,9 +1607,9 @@ await loadStatus();
   else if (r.repo) history.pushState({ repo: r.repo }, "", repoRoute(r.repo));
   applyRoute();
 })();
-connectStream();
+syncStreams();
 setInterval(loadStatus, POLL_MS);
-setInterval(() => { if (es && es.readyState === 2) { try { es.close(); } catch {} connectStream(); } }, 5000);
+setInterval(syncStreams, 5000);
 </script>
 </body>
 </html>
