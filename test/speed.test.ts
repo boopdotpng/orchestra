@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -82,6 +82,62 @@ describe("MCP call path speed checks", () => {
     ) as { agents: ManagedAgent[] };
     expect(tornDown.agents).toHaveLength(4);
     expect(created.agents.every((agent) => !existsSync(agent.cwd))).toBe(true);
+
+    store.close();
+  });
+
+  test("read transcript stays compact with noisy event history", async () => {
+    const { store, handler } = seededFixture({ agentCount: 1, eventsPerAgent: 1 });
+    const insertEvent = store.db.query(
+      "INSERT INTO events (thread_id, turn_id, method, payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?)",
+    );
+    const noise = "internal noise ".repeat(40);
+    const seedNoise = store.db.transaction(() => {
+      for (let index = 0; index < 900; index += 1) {
+        const type = index % 2 === 0 ? "stream.reasoning" : "stream.command";
+        insertEvent.run(
+          "thread-0",
+          "turn-0",
+          type,
+          JSON.stringify({ type, threadId: "thread-0", turnId: "turn-0", itemId: `noise-${index}`, delta: noise }),
+          index + 2,
+        );
+      }
+      insertEvent.run(
+        "thread-0",
+        "turn-0",
+        "item.completed",
+        JSON.stringify({
+          type: "item.completed",
+          threadId: "thread-0",
+          turnId: "turn-0",
+          itemId: "user-1",
+          item: { type: "userMessage", content: [{ type: "inputText", text: "Please summarize the result." }] },
+        }),
+        902,
+      );
+      insertEvent.run(
+        "thread-0",
+        "turn-0",
+        "item.completed",
+        JSON.stringify({
+          type: "item.completed",
+          threadId: "thread-0",
+          turnId: "turn-0",
+          itemId: "agent-1",
+          item: { type: "agentMessage", id: "agent-1", text: "Done. The change is ready." },
+        }),
+        903,
+      );
+    });
+    seedNoise();
+
+    const result = (await timedJson("MCP read", 90, () => handler(jsonRequest("http://127.0.0.1/agents/a000/read", {})))) as { path: string };
+    const transcript = readFileSync(result.path, "utf8");
+    expect(transcript).toContain("Please summarize the result.");
+    expect(transcript).toContain("Done. The change is ready.");
+    expect(transcript).not.toContain("internal noise");
+    expect(transcript.length).toBeLessThan(800);
 
     store.close();
   });

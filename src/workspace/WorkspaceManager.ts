@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentManager } from "../manager/AgentManager";
 import { DEFAULT_MODEL, DEFAULT_SERVICE_TIER } from "../config";
-import type { ManagedAgent, RepoRegistration, StartAgentOptions } from "../domain/types";
+import type { Json, ManagedAgent, RepoRegistration, StartAgentOptions } from "../domain/types";
 import { OrchestraStore } from "../store/OrchestraStore";
 
 export type WorkspaceManagerOptions = {
@@ -277,7 +277,7 @@ export class WorkspaceManager {
     const events = this.store.listEvents(agent.threadId, 1000);
     const dir = join("/tmp", "orchestra");
     mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${id}-${events.length}.${asJson ? "json" : "md"}`);
+    const path = join(dir, `${id}.${asJson ? "json" : "md"}`);
     if (asJson) {
       writeFileSync(path, JSON.stringify({ agent, events }, null, 2));
     } else {
@@ -879,6 +879,7 @@ function uniqueAgentId(isAvailable: (id: string) => boolean): string {
 }
 
 function transcriptMarkdown(agent: ManagedAgent, events: unknown[]): string {
+  const messages = transcriptMessages(events);
   return [
     `# Orchestra Agent ${agent.id}`,
     "",
@@ -886,9 +887,116 @@ function transcriptMarkdown(agent: ManagedAgent, events: unknown[]): string {
     `- cwd: ${agent.cwd}`,
     `- branch: ${agent.branch}`,
     "",
-    "```json",
-    JSON.stringify(events, null, 2),
-    "```",
+    ...(messages.length ? messages.flatMap((message) => [`## ${message.role}`, "", message.text, ""]) : ["No user or agent messages captured.", ""]),
     "",
   ].join("\n");
+}
+
+type TranscriptMessage = {
+  role: "User" | "Assistant";
+  text: string;
+};
+
+function transcriptMessages(events: unknown[]): TranscriptMessage[] {
+  const messages: TranscriptMessage[] = [];
+  const streamedAgents = new Map<string, number>();
+
+  for (const event of events) {
+    const record = asRecord(event);
+    const type = readRecordString(record, "type");
+    if (type === "stream.agent") {
+      const itemId = readRecordString(record, "itemId");
+      const delta = readRecordString(record, "delta") ?? "";
+      if (!itemId || !delta) {
+        continue;
+      }
+      const existing = streamedAgents.get(itemId);
+      if (existing === undefined) {
+        streamedAgents.set(itemId, messages.length);
+        messages.push({ role: "Assistant", text: delta });
+      } else {
+        messages[existing]!.text += delta;
+      }
+      continue;
+    }
+
+    if (type !== "item.completed") {
+      continue;
+    }
+
+    const item = asRecord(record.item);
+    const itemType = readRecordString(item, "type") ?? readRecordString(item, "itemType");
+    if (itemType === "userMessage") {
+      const text = userMessageText(item.content).trim();
+      if (text) {
+        messages.push({ role: "User", text });
+      }
+      continue;
+    }
+
+    if (itemType === "agentMessage") {
+      const text = readRecordString(item, "text")?.trim();
+      if (!text) {
+        continue;
+      }
+      const itemId = readRecordString(record, "itemId") ?? readRecordString(item, "id");
+      const existing = itemId ? streamedAgents.get(itemId) : undefined;
+      if (existing === undefined) {
+        messages.push({ role: "Assistant", text });
+      } else {
+        messages[existing] = { role: "Assistant", text };
+      }
+    }
+  }
+
+  return messages;
+}
+
+function userMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return stringifyTranscriptValue(content);
+  }
+  return content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      const record = asRecord(part);
+      const type = readRecordString(record, "type");
+      if ((type === "text" || type === "inputText") && typeof record.text === "string") {
+        return record.text;
+      }
+      if (type === "inputImage" && typeof record.imageUrl === "string") {
+        return `[image] ${record.imageUrl}`;
+      }
+      return stringifyTranscriptValue(part);
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stringifyTranscriptValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function asRecord(value: unknown): Record<string, Json | undefined> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json | undefined>) : {};
+}
+
+function readRecordString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
 }

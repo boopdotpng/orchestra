@@ -139,7 +139,7 @@ The project MCP template is `.mcp.json`. It runs:
 bun run /path/to/orchestra/src/mcp_server.ts
 ```
 
-The MCP server talks to the local Orchestra HTTP service, so the systemd service should normally be running first. The MCP `read` tool writes a transcript file under `/tmp/orchestra` and returns the path instead of dumping the entire context into the tool result. That file includes agent messages, turn events, tool calls, and tool call results captured from app-server notifications.
+The MCP server talks to the local Orchestra HTTP service, so the systemd service should normally be running first. The MCP `read` tool writes a transcript file under `/tmp/orchestra` and returns the path instead of dumping the entire context into the tool result. Markdown transcripts include only user messages and assistant output, omitting reasoning, tool calls, command output, and other internal events. Pass `json: true` to write the raw agent and event data instead.
 
 MCP tools:
 

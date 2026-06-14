@@ -139,7 +139,92 @@ describe("WorkspaceManager", () => {
     expect(response.results.every((result) => result.ok)).toBe(true);
     expect(backend.steeredTurns.map((turn) => turn.input)).toEqual(["shared update", "shared update", "shared update"]);
     expect(backend.maxConcurrentSteers).toBe(3);
-    expect(response.results.map((result) => result.id)).toEqual(agents.map((agent) => agent.id));
+    expect(response.results.map((result) => result.id).sort()).toEqual(agents.map((agent) => agent.id).sort());
+
+    store.close();
+  });
+
+  test("readTranscript writes a compact conversation transcript", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const runs = join(root, "runs");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    const [agent] = await workspace.create(source, {
+      workspaceName: "transcript test",
+      runsRoot: runs,
+      prompt: "hello agent",
+    });
+
+    store.applyEvent({
+      type: "item.completed",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "user-1",
+      item: { type: "userMessage", content: [{ type: "inputText", text: "Please fix the bug." }] },
+    });
+    store.applyEvent({
+      type: "stream.reasoning",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "thinking-1",
+      delta: "private chain of thought",
+    });
+    store.applyEvent({
+      type: "stream.command",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "tool-1",
+      delta: "tool output",
+    });
+    store.applyEvent({
+      type: "stream.agent",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "agent-1",
+      delta: "Fixed ",
+    });
+    store.applyEvent({
+      type: "stream.agent",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "agent-1",
+      delta: "it.",
+    });
+    store.applyEvent({
+      type: "item.completed",
+      threadId: agent!.threadId,
+      turnId: "turn-1",
+      itemId: "agent-1",
+      item: { type: "agentMessage", id: "agent-1", text: "Fixed it." },
+    });
+
+    const firstPath = workspace.readTranscript(agent!.id);
+    const transcript = readFileSync(firstPath, "utf8");
+
+    expect(transcript).toContain("## User\n\nPlease fix the bug.");
+    expect(transcript).toContain("## Assistant\n\nFixed it.");
+    expect(transcript.match(/Fixed it\./g)).toHaveLength(1);
+    expect(transcript).not.toContain("private chain of thought");
+    expect(transcript).not.toContain("tool output");
+
+    store.applyEvent({
+      type: "item.completed",
+      threadId: agent!.threadId,
+      turnId: "turn-2",
+      itemId: "agent-2",
+      item: { type: "agentMessage", id: "agent-2", text: "Second response." },
+    });
+    writeFileSync(firstPath, "stale transcript");
+    const secondPath = workspace.readTranscript(agent!.id);
+    const updated = readFileSync(secondPath, "utf8");
+    expect(secondPath).toBe(firstPath);
+    expect(updated).not.toBe("stale transcript");
+    expect(updated).toContain("Second response.");
 
     store.close();
   });

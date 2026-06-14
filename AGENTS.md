@@ -1,5 +1,11 @@
 # Agent Notes
 
+## Testing New Functionality
+
+Add focused tests for new behavior. When creating a new MCP tool or changing an
+MCP call path, also add or update speed coverage in `test/speed.test.ts` so the
+tool stays bounded as stored agent/event data grows.
+
 ## Restarting Services After Code Changes
 
 Orchestra runs directly from the TypeScript source files with Bun. Long-running

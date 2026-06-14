@@ -122,6 +122,27 @@ server.tool(
 );
 
 server.tool(
+  "read",
+  [
+    "Write an agent transcript to /tmp/orchestra and return the generated file path.",
+    "Markdown transcripts include only user messages and assistant output, omitting reasoning, tool calls, command output, and other internal events.",
+    "Use json=true to write the raw agent and event data as JSON when internal event details are needed.",
+  ].join(" "),
+  {
+    id: z.string().optional().describe("4-character lowercase hex agent id returned by create."),
+    agent: z.string().optional().describe("Alias for id."),
+    json: z.boolean().optional().describe("Write JSON instead of Markdown. Defaults to false."),
+  },
+  async ({ id, agent, json }) => {
+    const selected = id ?? agent;
+    if (!selected) {
+      throw new Error("read requires id or agent");
+    }
+    return text(await post(`/agents/${encodeURIComponent(selected)}/read`, { json: Boolean(json) }));
+  },
+);
+
+server.tool(
   "standouts",
   "Show top-3 mechanical standout markers within one workspace: most code written, finished last, and broadest surface area. These are interesting signals, not quality scores.",
   {
