@@ -204,10 +204,10 @@ Prints enriched status for all managed agents, including last assistant tail, tu
 The table stays compact and prints recent assistant output below it, so long summaries do not stretch every row.
 
 ```bash
-orchestra teardown <workspace-name>
+orchestra teardown <workspace-name-or-fuzzy-match>
 ```
 
-Destroys all agents in the exact workspace/run name. To remove a single agent, use `orchestra remove <id>`.
+Destroys all agents in a workspace/run. Exact workspace names are removed directly. A unique fuzzy match prints the resolved full workspace name, agent ids, and repos, then asks for confirmation; pass `--yes` to confirm the fuzzy match non-interactively. To remove a single agent, use `orchestra remove <id>`.
 
 ```bash
 orchestra steer <id> "run tests and fix failures"

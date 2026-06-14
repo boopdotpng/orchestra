@@ -77,7 +77,7 @@ async function main(): Promise<void> {
         status(store, args);
         break;
       case "teardown":
-        await teardown(workspace, args);
+        await teardown(workspace, store, args);
         break;
       case "remove":
         await remove(workspace, args);
@@ -190,8 +190,8 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
       return;
     }
     case "teardown": {
-      const workspaceName = required(args.positionals[0], "workspace name");
-      const { agents } = await client.teardownWorkspace({ workspace: workspaceName });
+      const target = await resolveDaemonWorkspaceTeardownTarget(client, args);
+      const { agents } = await client.teardownWorkspace({ workspace: target.name });
       printRemovedAgents(agents);
       return;
     }
@@ -252,10 +252,172 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
   printCreatedAgents(agents);
 }
 
-async function teardown(workspace: WorkspaceManager, args: ParsedArgs): Promise<void> {
-  const workspaceName = required(args.positionals[0], "workspace name");
-  const agents = await workspace.teardownWorkspace(workspaceName);
+async function teardown(workspace: WorkspaceManager, store: OrchestraStore, args: ParsedArgs): Promise<void> {
+  const target = await resolveLocalWorkspaceTeardownTarget(store, args);
+  const agents = await workspace.teardownWorkspace(target.name);
   printRemovedAgents(agents);
+}
+
+type WorkspaceAgentRef = Pick<ManagedAgent, "id" | "workspaceName" | "repoPath" | "cwd">;
+
+type WorkspaceTeardownTarget = {
+  name: string;
+  agents: WorkspaceAgentRef[];
+  fuzzy: boolean;
+  query: string;
+};
+
+async function resolveDaemonWorkspaceTeardownTarget(client: OrchestraClient, args: ParsedArgs): Promise<WorkspaceTeardownTarget> {
+  const query = required(args.positionals[0], "workspace name");
+  const status = await client.status();
+  const target = resolveWorkspaceTeardownTarget(query, status.agents);
+  await confirmFuzzyWorkspaceTeardown(target, args);
+  return target;
+}
+
+async function resolveLocalWorkspaceTeardownTarget(store: OrchestraStore, args: ParsedArgs): Promise<WorkspaceTeardownTarget> {
+  const query = required(args.positionals[0], "workspace name");
+  const agents = store.listManagedAgents();
+  const target = resolveWorkspaceTeardownTarget(query, agents);
+  await confirmFuzzyWorkspaceTeardown(target, args);
+  return target;
+}
+
+function resolveWorkspaceTeardownTarget(query: string, agents: WorkspaceAgentRef[]): WorkspaceTeardownTarget {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    throw new Error("workspace name is required");
+  }
+  const groups = groupAgentsByWorkspace(agents);
+  const exact = groups.filter((group) => sameWorkspaceName(group.name, trimmed));
+  if (exact.length === 1) {
+    return { ...exact[0]!, fuzzy: false, query: trimmed };
+  }
+  if (exact.length > 1) {
+    throw new Error(`ambiguous workspace name: ${trimmed} matches ${exact.map((group) => group.name).join(", ")}`);
+  }
+  const matches = fuzzyWorkspaceMatches(trimmed, groups);
+  if (matches.length === 0) {
+    throw new Error(`no workspace matching ${trimmed}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`ambiguous workspace match: ${trimmed} matches ${matches.map((group) => group.name).join(", ")}`);
+  }
+  return { ...matches[0]!, fuzzy: true, query: trimmed };
+}
+
+function groupAgentsByWorkspace(agents: WorkspaceAgentRef[]): Array<{ name: string; agents: WorkspaceAgentRef[] }> {
+  const byName = new Map<string, { name: string; agents: WorkspaceAgentRef[] }>();
+  for (const agent of agents) {
+    const key = agent.workspaceName;
+    let group = byName.get(key);
+    if (!group) {
+      group = { name: key, agents: [] };
+      byName.set(key, group);
+    }
+    group.agents.push(agent);
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function fuzzyWorkspaceMatches(query: string, groups: Array<{ name: string; agents: WorkspaceAgentRef[] }>): Array<{ name: string; agents: WorkspaceAgentRef[] }> {
+  const scored = groups
+    .map((group) => ({ group, score: workspaceMatchScore(query, group.name) }))
+    .filter((entry): entry is { group: { name: string; agents: WorkspaceAgentRef[] }; score: number } => entry.score !== undefined)
+    .sort((left, right) => left.score - right.score || left.group.name.localeCompare(right.group.name));
+  return scored.map((entry) => entry.group);
+}
+
+function workspaceMatchScore(query: string, workspaceName: string): number | undefined {
+  const needle = normalizeWorkspaceSearch(query);
+  const candidate = normalizeWorkspaceSearch(workspaceName);
+  if (!needle) {
+    return undefined;
+  }
+  if (candidate.startsWith(needle)) {
+    return 0;
+  }
+  const index = candidate.indexOf(needle);
+  if (index >= 0) {
+    return 10 + index;
+  }
+  const compactNeedle = compactWorkspaceSearch(needle);
+  const compactCandidate = compactWorkspaceSearch(candidate);
+  if (compactNeedle.length < 2) {
+    return undefined;
+  }
+  if (compactCandidate.startsWith(compactNeedle)) {
+    return 40;
+  }
+  const compactIndex = compactCandidate.indexOf(compactNeedle);
+  if (compactIndex >= 0) {
+    return 50 + compactIndex;
+  }
+  const subsequence = subsequenceScore(compactNeedle, compactCandidate);
+  return subsequence === undefined ? undefined : 100 + subsequence;
+}
+
+function normalizeWorkspaceSearch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\u2026/g, "...")
+    .replace(/\.{2,}$/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function compactWorkspaceSearch(value: string): string {
+  return value.replace(/[-_\s./]+/g, "");
+}
+
+function subsequenceScore(needle: string, candidate: string): number | undefined {
+  let candidateIndex = 0;
+  let score = 0;
+  for (const char of needle) {
+    const found = candidate.indexOf(char, candidateIndex);
+    if (found < 0) {
+      return undefined;
+    }
+    score += found - candidateIndex;
+    candidateIndex = found + 1;
+  }
+  return score;
+}
+
+async function confirmFuzzyWorkspaceTeardown(target: WorkspaceTeardownTarget, args: ParsedArgs): Promise<void> {
+  if (!target.fuzzy) {
+    return;
+  }
+  printWorkspaceMatch(target);
+  if (args.flags.yes === true || args.flags.y === true) {
+    return;
+  }
+  const rl = createInterface({ input, output });
+  try {
+    const answer = (
+      await rl.question(`Remove workspace "${target.name}" and ${plural(target.agents.length, "agent")}? Type y or the workspace name to confirm: `)
+    ).trim();
+    if (answer.toLowerCase() === "y" || answer.toLowerCase() === "yes" || sameWorkspaceName(answer, target.name)) {
+      return;
+    }
+  } finally {
+    rl.close();
+  }
+  throw new Error("teardown cancelled");
+}
+
+function printWorkspaceMatch(target: WorkspaceTeardownTarget): void {
+  console.log(`matched workspace "${target.query}" to "${target.name}"`);
+  const ids = target.agents.map((agent) => agent.id).sort().join(", ");
+  console.log(`agents: ${ids || "none"}`);
+  const repos = [...new Set(target.agents.map((agent) => agent.repoPath ?? shortPath(agent.cwd)))].sort();
+  if (repos.length) {
+    console.log(`repos: ${repos.join(", ")}`);
+  }
+}
+
+function sameWorkspaceName(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function status(store: OrchestraStore, args: ParsedArgs): void {
@@ -1166,7 +1328,7 @@ function printHelp(): void {
 Usage:
   orchestra create <name> <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
   orchestra status [workspace-name|--workspace NAME]
-  orchestra teardown <workspace-name>
+  orchestra teardown <workspace-name|fuzzy-match> [--yes]
   orchestra remove <id>
   orchestra ls
   orchestra standouts
@@ -1202,11 +1364,16 @@ Options:
   --db PATH                 default: ~/.orchestra/orchestra.db
   --url URL                 orchestra server, default: $ORCHESTRA_URL or http://127.0.0.1:5751
   --workspace NAME          filter status output by workspace name
+  --yes                     confirm a unique fuzzy teardown match without prompting
   --local                   skip the orchestra server and use a direct codex app-server transport
 
 create, steer, interrupt, teardown, and remove are sent to the running
 orchestra server when one is reachable, since it owns the agent threads.
 Pass --local to force the direct transport.
+
+teardown accepts an exact workspace name or one unique fuzzy match. Fuzzy
+matches print the resolved workspace and require confirmation unless --yes is
+passed.
 `);
 }
 

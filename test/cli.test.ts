@@ -75,6 +75,7 @@ describe("orchestra CLI daemon routing", () => {
   test("routes teardown of a workspace name through the orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
+      "GET /status": { agents: [{ id: "ab12", workspaceName: "blackhole-py", cwd: "/tmp/runs/repo/ab12" }] },
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/repo/ab12" }] },
     });
 
@@ -90,6 +91,7 @@ describe("orchestra CLI daemon routing", () => {
   test("routes teardown of a workspace name with spaces", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {
+      "GET /status": { agents: [{ id: "ab12", workspaceName: "focused pass", cwd: "/tmp/runs/bh-tournament/ab12" }] },
       "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/bh-tournament/ab12" }] },
     });
 
@@ -97,6 +99,67 @@ describe("orchestra CLI daemon routing", () => {
     expect(proc.exitCode).toBe(0);
     const teardown = requests.find((request) => request.path === "/teardown");
     expect(teardown?.body).toEqual({ workspace: "focused pass" });
+  });
+
+  test("confirms a unique fuzzy workspace match before daemon teardown", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "GET /status": {
+        agents: [
+          {
+            id: "ab12",
+            workspaceName: "sfpu-instr-opcode-sanity",
+            repoPath: "/tmp/repos/blackhole-py",
+            cwd: "/tmp/runs/blackhole-py/ab12",
+          },
+        ],
+      },
+      "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/blackhole-py/ab12" }] },
+    });
+
+    const proc = await runCli(["teardown", "sfpu-instr-opcode...", "--url", baseUrl], undefined, "y\n");
+    expect(proc.stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout).toContain('matched workspace "sfpu-instr-opcode..." to "sfpu-instr-opcode-sanity"');
+    expect(proc.stdout).toContain("agents: ab12");
+    const teardown = requests.find((request) => request.path === "/teardown");
+    expect(teardown?.body).toEqual({ workspace: "sfpu-instr-opcode-sanity" });
+  });
+
+  test("refuses ambiguous fuzzy workspace teardown matches", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "GET /status": {
+        agents: [
+          { id: "ab12", workspaceName: "sfpu-instr-opcode-sanity", cwd: "/tmp/runs/blackhole-py/ab12" },
+          { id: "cd34", workspaceName: "sfpu-instr-opcode-cleanup", cwd: "/tmp/runs/blackhole-py/cd34" },
+        ],
+      },
+      "POST /teardown": { agents: [] },
+    });
+
+    const proc = await runCli(["teardown", "sfpu", "--url", baseUrl]);
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr).toContain("ambiguous workspace match: sfpu matches");
+    expect(proc.stderr).toContain("sfpu-instr-opcode-cleanup");
+    expect(proc.stderr).toContain("sfpu-instr-opcode-sanity");
+    expect(requests.some((request) => request.method === "POST" && request.path === "/teardown")).toBe(false);
+  });
+
+  test("cancels fuzzy workspace teardown when confirmation is rejected", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "GET /status": {
+        agents: [{ id: "ab12", workspaceName: "f32acc-investigate", cwd: "/tmp/runs/blackhole-py/ab12" }],
+      },
+      "POST /teardown": { agents: [{ id: "ab12", cwd: "/tmp/runs/blackhole-py/ab12" }] },
+    });
+
+    const proc = await runCli(["teardown", "f32acc...", "--url", baseUrl], undefined, "n\n");
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stdout).toContain('matched workspace "f32acc..." to "f32acc-investigate"');
+    expect(proc.stderr).toContain("teardown cancelled");
+    expect(requests.some((request) => request.method === "POST" && request.path === "/teardown")).toBe(false);
   });
 
   test("prints the server error message on failure", async () => {
@@ -194,7 +257,7 @@ function startStubServer(requests: RecordedRequest[], routes: Record<string, unk
   return `http://127.0.0.1:${server.port}`;
 }
 
-async function runCli(args: string[], prepareDb?: (dbPath: string) => void): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCli(args: string[], prepareDb?: (dbPath: string) => void, stdin?: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const root = mkdtempSync(join(tmpdir(), "orchestra-cli-test-"));
   roots.push(root);
   const dbPath = join(root, "orchestra.db");
@@ -204,8 +267,13 @@ async function runCli(args: string[], prepareDb?: (dbPath: string) => void): Pro
   const proc = Bun.spawn(["bun", CLI, ...args, "--db", dbPath], {
     stdout: "pipe",
     stderr: "pipe",
+    stdin: stdin === undefined ? "ignore" : "pipe",
     env: { ...process.env, ORCHESTRA_URL: "", ORCHESTRA_RUNS: join(root, "runs"), HOME: root },
   });
+  if (stdin !== undefined && proc.stdin) {
+    proc.stdin.write(stdin);
+    proc.stdin.end();
+  }
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { exitCode, stdout, stderr };
 }
