@@ -885,6 +885,7 @@ function printApprovals(approvals: Approval[]): void {
 type MonitorAgent = {
   id: string;
   repoPath?: string | undefined;
+  workspaceName?: string | undefined;
   threadId: string;
   status: string;
   lastAssistantMessageTail?: string | undefined;
@@ -899,17 +900,20 @@ type MonitorCompletion = {
 async function monitor(args: ParsedArgs): Promise<void> {
   const baseUrl = orchestraUrl(args);
   const idFilter = typeof args.flags.id === "string" ? args.flags.id : args.positionals[0] && /^[0-9a-f]{4}$/i.test(args.positionals[0]) ? args.positionals[0] : undefined;
+  const workspaceFilter = typeof args.flags.workspace === "string" ? args.flags.workspace : undefined;
   const workdirFilter =
     typeof args.flags.workdir === "string"
       ? resolve(args.flags.workdir)
-      : !idFilter && args.positionals[0] && args.positionals[0] !== "all"
+      : !idFilter && !workspaceFilter && args.positionals[0] && args.positionals[0] !== "all"
         ? resolve(args.positionals[0])
         : undefined;
   const exitWhenIdle = args.flags.until === "never" || args.flags.follow === true ? false : true;
   const singleAgent = Boolean(idFilter);
-  const agents = await fetchMonitorAgents(baseUrl, idFilter, workdirFilter);
+  const agents = await fetchMonitorAgents(baseUrl, idFilter, workdirFilter, workspaceFilter);
   if (!agents.size) {
-    console.error(`monitor no matching agents${idFilter ? ` id=${idFilter}` : ""}${workdirFilter ? ` workdir=${workdirFilter}` : ""}`);
+    console.error(
+      `monitor no matching agents${idFilter ? ` id=${idFilter}` : ""}${workspaceFilter ? ` workspace=${workspaceFilter}` : ""}${workdirFilter ? ` workdir=${workdirFilter}` : ""}`,
+    );
     return;
   }
   if (exitWhenIdle && allMonitorAgentsIdle(agents)) {
@@ -960,7 +964,7 @@ async function monitor(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function fetchMonitorAgents(baseUrl: string, idFilter?: string, workdirFilter?: string): Promise<Map<string, MonitorAgent>> {
+async function fetchMonitorAgents(baseUrl: string, idFilter?: string, workdirFilter?: string, workspaceFilter?: string): Promise<Map<string, MonitorAgent>> {
   const response = await fetch(new URL("/status", baseUrl));
   if (!response.ok) {
     throw new Error(`monitor failed to read status from ${baseUrl}: ${response.status} ${await response.text()}`);
@@ -969,6 +973,9 @@ async function fetchMonitorAgents(baseUrl: string, idFilter?: string, workdirFil
   const agents = new Map<string, MonitorAgent>();
   for (const agent of status.agents ?? []) {
     if (idFilter && agent.id !== idFilter) {
+      continue;
+    }
+    if (workspaceFilter && !sameWorkspaceName(agent.workspaceName ?? "", workspaceFilter)) {
       continue;
     }
     if (workdirFilter && agent.repoPath !== workdirFilter) {
@@ -1340,7 +1347,7 @@ Usage:
   orchestra exec <id> "cmd"
   orchestra steer <id> "guidance"
   orchestra interrupt <id>
-  orchestra monitor <id|workdir> [--follow]
+  orchestra monitor <id|workdir|all> [--workspace NAME] [--follow]
   orchestra approvals
 
 Debug:
