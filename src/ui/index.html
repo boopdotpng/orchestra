@@ -600,6 +600,7 @@ const state = {
   detailLoadSeq: 0,
   detailLoading: null,
   detailPending: {},
+  detailSeq: {},       // id -> highest event cursor (seq) applied, for resume + dedup
   filters: { reasoning: true, tools: true, events: true },
   collapsed: loadCollapsed(), // Set of workspace keys collapsed in the sidebar
   _nodeMap: null,      // mid -> { node, text, kind } for incremental convo render
@@ -1287,6 +1288,7 @@ function renderDiff(text) {
 function pushMsg(id, kind, text, sub) { state.convo[id] = state.convo[id] || []; state.convo[id].push({ kind, text, sub }); }
 
 function applyDetailEvent(id, ev) {
+  if (typeof ev.seq === "number" && ev.seq > (state.detailSeq[id] || 0)) state.detailSeq[id] = ev.seq;
   state.streamBuf[id] = state.streamBuf[id] || {};
   const buf = state.streamBuf[id];
   switch (ev.type) {
@@ -1424,12 +1426,13 @@ async function loadAgentDetail(id) {
     const pending = state.detailPending[id] || [];
     delete state.detailPending[id];
     if (state.detailLoading === id) state.detailLoading = null;
-    pending.forEach((ev) => applyDetailEvent(id, ev));
+    // Buffered live events can overlap the freshly-loaded history; dedup by cursor.
+    pending.forEach((ev) => ingestDetailEvent(id, ev));
   };
   try {
     const history = await api(`/agents/${encodeURIComponent(id)}/history`);
     if (seq !== state.detailLoadSeq) return;
-    state.convo[id] = []; state.streamBuf[id] = {}; state._nodeMap = null;
+    state.convo[id] = []; state.streamBuf[id] = {}; state._nodeMap = null; state.detailSeq[id] = 0;
     (history.events || []).forEach((ev) => applyDetailEvent(id, ev));
     if (!state.convo[id].length) {
       const thread = await api(`/agents/${encodeURIComponent(id)}/thread`);
@@ -1443,7 +1446,7 @@ async function loadAgentDetail(id) {
     try {
       const t = await api(`/agents/${encodeURIComponent(id)}/turn`);
       if (seq !== state.detailLoadSeq) return;
-      state.convo[id] = []; state.streamBuf[id] = {}; state._nodeMap = null;
+      state.convo[id] = []; state.streamBuf[id] = {}; state._nodeMap = null; state.detailSeq[id] = 0;
       (t.recent || []).forEach((ev) => applyDetailEvent(id, ev));
       state._nodeMap = null;
       finishPending();
@@ -1545,14 +1548,14 @@ let overviewEs;
 let detailEs;
 let detailStreamId = null;
 function setConn(cls, text) { $("conn").className = "conn " + cls; $("connText").textContent = text; }
-function shouldStream() { return document.visibilityState === "visible" && document.hasFocus(); }
+function shouldStream() { return document.visibilityState === "visible"; }
 function closeStream(stream) { if (stream) { try { stream.close(); } catch {} } }
 function disconnectStreams() {
   closeStream(overviewEs); overviewEs = null;
   closeStream(detailEs); detailEs = null; detailStreamId = null;
 }
 function syncStreams() {
-  if (!shouldStream()) { disconnectStreams(); setConn("down", "paused"); return; }
+  if (!shouldStream()) { disconnectStreams(); setConn("down", "hidden"); return; }
   if (!overviewEs || overviewEs.readyState === 2) connectOverviewStream();
   if (state.selected) {
     if (!detailEs || detailEs.readyState === 2 || detailStreamId !== state.selected) connectDetailStream(state.selected);
@@ -1564,14 +1567,19 @@ function connectOverviewStream() {
   closeStream(overviewEs);
   overviewEs = new EventSource(API + "/events?overview=1");
   overviewEs.addEventListener("hello", () => setConn("live", state.selected ? "live + detail" : "live"));
-  overviewEs.onopen = () => setConn("live", state.selected ? "live + detail" : "live");
+  // Overview isn't replayed server-side; resync summaries whenever the stream (re)opens.
+  overviewEs.onopen = () => { setConn("live", state.selected ? "live + detail" : "live"); loadStatus(); };
   overviewEs.onerror = () => setConn("down", "reconnecting");
   overviewEs.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch { return; } if (ev.type === "hello") return; handleOverviewEvent(ev); };
 }
 function connectDetailStream(id) {
   closeStream(detailEs);
   detailStreamId = id;
-  detailEs = new EventSource(API + `/agents/${encodeURIComponent(id)}/events`);
+  // Resume from our cursor so a reconnect backfills only the missed events
+  // instead of replaying the whole transcript. First open (cursor 0) streams live;
+  // the full history comes from loadAgentDetail.
+  const since = state.detailSeq[id] > 0 ? `?since=${state.detailSeq[id]}` : "";
+  detailEs = new EventSource(API + `/agents/${encodeURIComponent(id)}/events${since}`);
   detailEs.addEventListener("hello", () => setConn("live", "live + detail"));
   detailEs.onopen = () => setConn("live", "live + detail");
   detailEs.onerror = () => setConn("down", "reconnecting");
@@ -1595,8 +1603,16 @@ function handleOverviewEvent(ev) {
   patchRow(id);
   patchRepoCard(id);
 }
+// Apply a detail event unless its cursor was already applied (replay overlap).
+function ingestDetailEvent(id, ev) {
+  if (typeof ev.seq === "number" && ev.seq <= (state.detailSeq[id] || 0)) return false;
+  applyDetailEvent(id, ev);
+  return true;
+}
 function handleDetailEvent(id, ev) {
   if (eventAgentId(ev) !== id) return;
+  // Drop replayed events we already have so a resumed stream doesn't double-render.
+  if (typeof ev.seq === "number" && ev.seq <= (state.detailSeq[id] || 0)) return;
   noteLiveOutput(id, ev);
   patchRow(id);
   patchRepoCard(id);
@@ -1609,14 +1625,13 @@ function handleDetailEvent(id, ev) {
   }
 }
 function handleStreamFocusChange() {
-  if (!shouldStream()) { disconnectStreams(); setConn("down", "paused"); return; }
+  if (!shouldStream()) { disconnectStreams(); setConn("down", "hidden"); return; }
+  // Reconnect; the detail stream replays its own gap via the resume cursor, so we
+  // only need a status refresh for the overview summaries here.
   loadStatus();
-  if (state.selected) loadAgentDetail(state.selected);
   syncStreams();
 }
 document.addEventListener("visibilitychange", handleStreamFocusChange);
-window.addEventListener("focus", handleStreamFocusChange);
-window.addEventListener("blur", handleStreamFocusChange);
 
 // ---------- boot ----------
 await loadConfig();

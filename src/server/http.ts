@@ -382,7 +382,11 @@ function sameWorkspaceName(left: string, right: string): boolean {
 
 function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string): Response {
   const threadId = agentId ? deps.workspace.requiredAgent(agentId).threadId : undefined;
-  const overview = !agentId && new URL(request.url).searchParams.get("overview") === "1";
+  const url = new URL(request.url);
+  const overview = !agentId && url.searchParams.get("overview") === "1";
+  // Resume cursor: browsers replay it via Last-Event-ID on auto-reconnect; the
+  // client also passes ?since= when it rebuilds the EventSource by hand.
+  const resumeFrom = streamCursor(request.headers.get("last-event-id"), url.searchParams.get("since"));
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | undefined;
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -397,7 +401,9 @@ function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: unknown, type = "message") => {
-        controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`));
+        const seq = (event as { seq?: unknown })?.seq;
+        const idLine = typeof seq === "number" ? `id: ${seq}\n` : "";
+        controller.enqueue(encoder.encode(`event: ${type}\n${idLine}data: ${JSON.stringify(event)}\n\n`));
       };
       const flush = () => {
         flushTimer = undefined;
@@ -418,6 +424,15 @@ function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string
         }
       };
       send({ type: "hello", scope: agentId ? "agent" : "all", agentId }, "hello");
+      // Backfill only the events missed since the client's cursor, then go live.
+      // Overview is intentionally not replayed (it coalesces per-thread and the
+      // client refreshes summaries via polling); the transcript stream is what
+      // needs gap-free recovery.
+      if (threadId && resumeFrom !== undefined) {
+        for (const event of deps.store.listEventsSince(threadId, resumeFrom)) {
+          send(event);
+        }
+      }
       unsubscribe = deps.manager.onEvent((event) => {
         if (!threadId || eventThreadId(event) === threadId) {
           if (overview) {
@@ -448,6 +463,15 @@ function eventStream(request: Request, deps: OrchestraHttpDeps, agentId?: string
       ...corsHeaders(),
     },
   });
+}
+
+function streamCursor(lastEventId: string | null, since: string | null): number | undefined {
+  for (const candidate of [lastEventId, since]) {
+    if (candidate == null || candidate === "") continue;
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  return undefined;
 }
 
 function eventThreadId(event: AgentEvent): string | undefined {

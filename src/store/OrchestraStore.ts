@@ -150,7 +150,12 @@ export class OrchestraStore {
   }
 
   private applyEventInner(event: AgentEvent): void {
-    this.recordEvent(event.type, event);
+    if (event.type !== "stream.command") {
+      // Stamp the persisted row id onto the in-flight event so live SSE subscribers
+      // can emit it as the stream cursor (`id:` / Last-Event-ID). The store listener
+      // runs before the SSE listeners, so the cursor is visible downstream.
+      (event as { seq?: number }).seq = this.recordEvent(event.type, event);
+    }
 
     switch (event.type) {
       case "agent.started":
@@ -188,8 +193,9 @@ export class OrchestraStore {
         break;
       case "stream.agent":
       case "stream.reasoning":
-      case "stream.command":
         this.appendItemText(event.threadId, event.turnId, event.itemId, event.delta);
+        break;
+      case "stream.command":
         break;
       case "approval.requested":
         this.insertApproval(event.approval);
@@ -460,9 +466,18 @@ export class OrchestraStore {
   listEvents(threadId: string, limit?: number): Json[] {
     const rows =
       typeof limit === "number"
-        ? (this.db.query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id DESC LIMIT ?").all(threadId, limit) as Row[]).reverse()
-        : (this.db.query("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY id ASC").all(threadId) as Row[]);
-    return rows.map((row) => parseJson(row.payload_json) ?? {});
+        ? (this.db.query("SELECT id, payload_json FROM events WHERE thread_id = ? ORDER BY id DESC LIMIT ?").all(threadId, limit) as Row[]).reverse()
+        : (this.db.query("SELECT id, payload_json FROM events WHERE thread_id = ? ORDER BY id ASC").all(threadId) as Row[]);
+    return rows.map(eventWithSeq);
+  }
+
+  // Events for one thread newer than `sinceSeq`, oldest-first. Used to backfill the
+  // gap when a live stream reconnects, instead of re-sending the whole transcript.
+  listEventsSince(threadId: string, sinceSeq: number, limit = 2000): Json[] {
+    const rows = this.db
+      .query("SELECT id, payload_json FROM events WHERE thread_id = ? AND id > ? ORDER BY id ASC LIMIT ?")
+      .all(threadId, sinceSeq, limit) as Row[];
+    return rows.map(eventWithSeq);
   }
 
   getTurn(turnId: string): Turn | undefined {
@@ -470,16 +485,18 @@ export class OrchestraStore {
     return row ? turnFromRow(row) : undefined;
   }
 
-  recordEvent(method: string, payload: Json): void {
+  recordEvent(method: string, payload: Json): number {
+    const storedPayload = this.payloadForStorage(method, payload);
     const threadId =
-      readString(payload, "threadId") ??
-      readNestedString(payload, "agent", "threadId") ??
-      readNestedString(payload, "params", "threadId");
+      readString(storedPayload, "threadId") ??
+      readNestedString(storedPayload, "agent", "threadId") ??
+      readNestedString(storedPayload, "params", "threadId");
     const turnId =
-      readString(payload, "turnId") ?? readNestedString(payload, "turn", "turnId") ?? readNestedString(payload, "params", "turnId");
-    this.db
+      readString(storedPayload, "turnId") ?? readNestedString(storedPayload, "turn", "turnId") ?? readNestedString(storedPayload, "params", "turnId");
+    const result = this.db
       .query("INSERT INTO events (thread_id, turn_id, method, payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?)")
-      .run(threadId ?? null, turnId ?? null, method, JSON.stringify(payload), Date.now());
+      .run(threadId ?? null, turnId ?? null, method, JSON.stringify(storedPayload), Date.now());
+    return Number(result.lastInsertRowid);
   }
 
   private updateAgentStatus(threadId: string, status: RuntimeStatus, raw: Json): void {
@@ -550,10 +567,11 @@ export class OrchestraStore {
   }
 
   private upsertItem(threadId: string, turnId: string, itemId: string | undefined, item: Json, eventType: string): void {
-    const id = itemId ?? readString(item, "id") ?? `${eventType}:${Date.now()}`;
-    const kind = readString(item, "type");
-    const status = readString(item, "status");
-    const text = readString(item, "text");
+    const storedItem = itemForStorage(item);
+    const id = itemId ?? readString(storedItem, "id") ?? `${eventType}:${Date.now()}`;
+    const kind = readString(storedItem, "type");
+    const status = readString(storedItem, "status");
+    const text = readString(storedItem, "text");
     this.db
       .query(`
         INSERT INTO items (item_id, thread_id, turn_id, kind, status, text, raw_json, updated_at_ms)
@@ -565,10 +583,13 @@ export class OrchestraStore {
           raw_json = excluded.raw_json,
           updated_at_ms = excluded.updated_at_ms
       `)
-      .run(id, threadId, turnId, kind ?? null, status ?? null, text ?? null, JSON.stringify(item), Date.now());
+      .run(id, threadId, turnId, kind ?? null, status ?? null, text ?? null, JSON.stringify(storedItem), Date.now());
   }
 
   private appendItemText(threadId: string, turnId: string, itemId: string, delta: string): void {
+    if (!delta) {
+      return;
+    }
     this.db
       .query(`
         INSERT INTO items (item_id, thread_id, turn_id, text, updated_at_ms)
@@ -578,6 +599,17 @@ export class OrchestraStore {
           updated_at_ms = excluded.updated_at_ms
       `)
       .run(itemId, threadId, turnId, delta, Date.now());
+  }
+
+  private payloadForStorage(method: string, payload: Json): Json {
+    if (method !== "item.started" && method !== "item.completed") {
+      return payload;
+    }
+    const record = asRecord(payload);
+    if (!record?.item) {
+      return payload;
+    }
+    return { ...record, item: itemForStorage(record.item) };
   }
 
   private insertApproval(approval: Approval): void {
@@ -657,6 +689,35 @@ function parseJson(value: unknown): Json | undefined {
   } catch {
     return undefined;
   }
+}
+
+function itemForStorage(item: Json | undefined): Json {
+  const record = asRecord(item);
+  if (!record || readString(record, "type") !== "commandExecution") {
+    return item ?? {};
+  }
+  const stored: Record<string, Json | undefined> = {
+    type: "commandExecution",
+    id: readString(record, "id"),
+    command: readString(record, "command"),
+    cwd: readString(record, "cwd"),
+    status: readString(record, "status"),
+  };
+  const exitCode = optionalNumber(record.exitCode);
+  if (exitCode !== undefined) {
+    stored.exitCode = exitCode;
+  }
+  return stored;
+}
+
+// Parse a persisted event row and attach its monotonic row id as `seq`, the cursor
+// clients use to dedup and to resume a reconnected stream from where they left off.
+function eventWithSeq(row: Row): Json {
+  const event = (parseJson(row.payload_json) ?? {}) as Record<string, unknown>;
+  if (typeof row.id === "number" || typeof row.id === "bigint") {
+    event.seq = Number(row.id);
+  }
+  return event as Json;
 }
 
 function agentFromRow(row: Row): Agent {

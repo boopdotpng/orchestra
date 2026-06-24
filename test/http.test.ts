@@ -438,6 +438,41 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 
+  test("resumes an agent event stream from a cursor, replaying only the gap", async () => {
+    const root = tempRoot();
+    const repo = join(root, "repo");
+    initGitRepo(repo);
+
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const manager = new AgentManager(new FakeBackend(), { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const created = (await (
+      await handler(jsonRequest("http://127.0.0.1/agents", { name: "resume", dir: repo, count: 1, prompt: "go" }))
+    ).json()) as { agents: Array<{ id: string; threadId: string }> };
+    const { id, threadId } = created.agents[0]!;
+
+    for (const delta of ["a", "b", "c"]) {
+      store.applyEvent({ type: "stream.agent", threadId, turnId: "turn-1", itemId: "item-1", delta });
+    }
+    // Cursor at the "a" event, after the agent-creation events on the same thread.
+    const aEvent = store.listEvents(threadId).find((e) => (e as { delta?: string }).delta === "a") as { seq: number };
+    const firstSeq = aEvent.seq;
+
+    const response = await handler(
+      new Request(`http://127.0.0.1/agents/${id}/events?since=${firstSeq}`, { headers: { accept: "text/event-stream" } }),
+    );
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+
+    const frames = await readSseFrames(response, 3); // hello + the two missed events
+    expect(frames[0]).toContain('"type":"hello"');
+    const deltas = frames.slice(1).map((f) => (JSON.parse(f.split("data: ")[1]!) as { delta: string }).delta);
+    expect(deltas).toEqual(["b", "c"]); // "a" was before the cursor and is not replayed
+
+    store.close();
+  });
+
   test("serves UI route map, config updates, and models", async () => {
     const root = tempRoot();
     const home = join(root, "home");
@@ -484,6 +519,28 @@ describe("Orchestra HTTP handler", () => {
     store.close();
   });
 });
+
+async function readSseFrames(response: Response, count: number): Promise<string[]> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  const frames: string[] = [];
+  let buffer = "";
+  try {
+    while (frames.length < count) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        frames.push(buffer.slice(0, sep));
+        buffer = buffer.slice(sep + 2);
+      }
+    }
+  } finally {
+    await reader.cancel();
+  }
+  return frames;
+}
 
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();

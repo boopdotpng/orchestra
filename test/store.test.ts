@@ -59,6 +59,31 @@ describe("OrchestraStore", () => {
     store.close();
   });
 
+  test("exposes a monotonic event cursor and replays only the gap", () => {
+    const store = new OrchestraStore(dbPath);
+    const mk = (delta: string) =>
+      store.applyEvent({ type: "stream.agent", threadId: "thread-1", turnId: "turn-1", itemId: "item-1", delta });
+
+    mk("a");
+    mk("b");
+    mk("c");
+
+    const all = store.listEvents("thread-1");
+    expect(all).toHaveLength(3);
+    // Every persisted event carries a strictly increasing seq cursor.
+    const seqs = all.map((e) => (e as { seq: number }).seq);
+    expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+    expect(new Set(seqs).size).toBe(3);
+
+    // Resuming from the first cursor backfills only the two later events.
+    const gap = store.listEventsSince("thread-1", seqs[0]!);
+    expect(gap.map((e) => (e as { delta: string }).delta)).toEqual(["b", "c"]);
+    // Resuming from the newest cursor yields nothing.
+    expect(store.listEventsSince("thread-1", seqs[2]!)).toHaveLength(0);
+
+    store.close();
+  });
+
   test("mirrors turn state into managed agents", () => {
     const store = new OrchestraStore(dbPath);
     const repo = store.upsertRepo({ path: "/repo", baseCommit: "abc", baseBranch: "main" });
@@ -221,6 +246,64 @@ describe("OrchestraStore", () => {
     const events = store.listEvents("thread-tool", 10);
     expect(events).toHaveLength(1);
     expect(JSON.stringify(events[0])).toContain("item/mcpToolCall/progress");
+
+    store.close();
+  });
+
+  test("stores command metadata without persisting command output", () => {
+    const store = new OrchestraStore(dbPath);
+    const output = "a".repeat(1_000_128);
+
+    store.applyEvent({
+      type: "item.started",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "cmd-1",
+      item: {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "rg noisy",
+        cwd: "/repo",
+        status: "inProgress",
+        aggregatedOutput: output,
+      },
+    });
+    store.applyEvent({
+      type: "stream.command",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "cmd-1",
+      delta: output,
+    });
+    store.applyEvent({
+      type: "item.completed",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "cmd-1",
+      item: {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "rg noisy",
+        cwd: "/repo",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: output,
+      },
+    });
+
+    const events = store.listEvents("thread-1");
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => (event as { type: string }).type)).toEqual(["item.started", "item.completed"]);
+    expect(JSON.stringify(events)).toContain("rg noisy");
+    expect(JSON.stringify(events)).not.toContain(output);
+
+    const row = store.db
+      .query("SELECT text, raw_json FROM items WHERE thread_id = ? AND turn_id = ? AND item_id = ?")
+      .get("thread-1", "turn-1", "cmd-1") as { text: string | null; raw_json: string };
+    expect(row.text).toBeNull();
+    expect(row.raw_json).toContain("rg noisy");
+    expect(row.raw_json).toContain('"exitCode":0');
+    expect(row.raw_json).not.toContain(output);
 
     store.close();
   });
