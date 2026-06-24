@@ -292,7 +292,7 @@ agents — it figures out fan-out, judging, and apply on its own. No `fanout`,
 
 ```
 register  <dir>                          pin repo + base commit (one-time)
-create    <name> <dir> [-n N] [--prompt T | --prompt-file F]
+create    <name> <dir> [-n N] [--explore] [--prompt T | --prompt-file F]
                                          reflink + branch + thread + optional first turn → prints id(s)
 teardown  <dir>                          stop threads + rm copies
 ls                                       id, status, repo, branch
@@ -318,6 +318,10 @@ is `steer`.
   pinned base, starts an idle thread, optionally fires the first turn, mints a
   **4-hex agent id**, returns the id(s). The orchestrator never needs the
   workdir (derivable + stored).
+- **`create <name> <dir> --explore`** — starts read-only report agents directly in
+  `dir`, including non-git folders. Explore agents share the same cwd, skip
+  copies and branches, force read-only sandboxing, and use the final assistant
+  message as the report.
 
 ### 10.3 create semantics (per-prompt; heterogeneity is free)
 
@@ -325,6 +329,8 @@ is `steer`.
 create "auth" <dir> --prompt "task"       → 1 agent, that prompt           → 1 id
 create "auth" <dir> --prompt-file plan.md → 1 agent, prompt from file      → 1 id
 create "auth" <dir> -n 8 --prompt "task"  → 8 agents, SAME prompt (fan-out)→ 8 ids
+create "auth" <dir> -n 8 --explore --prompt "report"
+                                           → 8 read-only reports, shared cwd→ 8 ids
 ```
 
 - `n` defaults to 1. `-n N` is purely **same-prompt replication**.

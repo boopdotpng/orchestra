@@ -116,6 +116,50 @@ describe("WorkspaceManager", () => {
     store.close();
   });
 
+  test("creates explore agents directly in a non-git folder without copying or deleting it", async () => {
+    const root = tempRoot();
+    const source = join(root, "notes");
+    const runs = join(root, "runs");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "README.md"), "# notes\n");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+
+    const agents = await workspace.create(source, {
+      workspaceName: "explore notes",
+      runsRoot: runs,
+      explore: true,
+      count: 2,
+      prompt: "map the folder",
+      approvalPolicy: "on-request",
+      sandbox: "danger-full-access",
+    });
+
+    expect(agents).toHaveLength(2);
+    expect(agents.every((agent) => agent.explore === true)).toBe(true);
+    expect(agents.every((agent) => agent.cwd === source)).toBe(true);
+    expect(agents.every((agent) => agent.branch === "explore")).toBe(true);
+    expect(agents.every((agent) => agent.repoPath === source)).toBe(true);
+    expect(existsSync(runs)).toBe(false);
+    expect(backend.startedThreads).toHaveLength(2);
+    expect(backend.startedThreads.every((thread) => thread.approvalPolicy === "never")).toBe(true);
+    expect(backend.startedThreads.every((thread) => thread.sandbox === "read-only")).toBe(true);
+    expect(backend.startedThreads.every((thread) => thread.developerInstructions?.includes("final assistant message as a concise report"))).toBe(true);
+    expect(backend.startedTurns.every((turn) => turn.input === "map the folder")).toBe(true);
+    expect(workspace.diff(agents[0]!.id)).toContain("explore agent");
+    expect(() => workspace.exec(agents[0]!.id, "touch should-not-run")).toThrow("exec is disabled");
+
+    const removed = await workspace.teardownWorkspace("EXPLORE NOTES");
+
+    expect(removed.map((agent) => agent.id).sort()).toEqual(agents.map((agent) => agent.id).sort());
+    expect(existsSync(source)).toBe(true);
+    expect(readFileSync(join(source, "README.md"), "utf8")).toBe("# notes\n");
+
+    store.close();
+  });
+
   test("broadcast steers target agents concurrently", async () => {
     const root = tempRoot();
     const source = join(root, "source");
@@ -578,9 +622,18 @@ class FakeBackend implements CodexBackend {
     reasoningEffort?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
+    developerInstructions?: string | undefined;
   }> = [];
   threadNames: Array<{ threadId: string; name: string }> = [];
-  startedTurns: Array<{ threadId: string; input: string; model?: string | undefined; serviceTier?: string | undefined; reasoningEffort?: string | undefined }> = [];
+  startedTurns: Array<{
+    threadId: string;
+    input: string;
+    model?: string | undefined;
+    serviceTier?: string | undefined;
+    reasoningEffort?: string | undefined;
+    approvalPolicy?: string | undefined;
+    sandbox?: string | undefined;
+  }> = [];
   steeredTurns: Array<{ threadId: string; turnId: string; input: string }> = [];
   startThreadDelayMs = 0;
   steerDelayMs = 0;
@@ -609,6 +662,7 @@ class FakeBackend implements CodexBackend {
     reasoningEffort?: string | undefined;
     approvalPolicy?: string | undefined;
     sandbox?: string | undefined;
+    developerInstructions?: string | undefined;
   }) {
     this.concurrentStartThreads += 1;
     this.maxConcurrentStartThreads = Math.max(this.maxConcurrentStartThreads, this.concurrentStartThreads);
@@ -653,8 +707,26 @@ class FakeBackend implements CodexBackend {
   async unarchiveThread() {
     return {};
   }
-  async startTurn(threadId: string, input: string, options: { model?: string | undefined; serviceTier?: string | undefined; reasoningEffort?: string | undefined } = {}) {
-    this.startedTurns.push({ threadId, input, model: options.model, serviceTier: options.serviceTier, reasoningEffort: options.reasoningEffort });
+  async startTurn(
+    threadId: string,
+    input: string,
+    options: {
+      model?: string | undefined;
+      serviceTier?: string | undefined;
+      reasoningEffort?: string | undefined;
+      approvalPolicy?: string | undefined;
+      sandbox?: string | undefined;
+    } = {},
+  ) {
+    this.startedTurns.push({
+      threadId,
+      input,
+      model: options.model,
+      serviceTier: options.serviceTier,
+      reasoningEffort: options.reasoningEffort,
+      approvalPolicy: options.approvalPolicy,
+      sandbox: options.sandbox,
+    });
     return { turn: { id: `turn-${this.startedTurns.length}`, status: "inProgress" } };
   }
   async steerTurn(threadId: string, turnId: string, input: string) {

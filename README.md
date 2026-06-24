@@ -191,9 +191,12 @@ These are the main commands for multi-agent work.
 ```bash
 orchestra create "auth cleanup" <dir> -n 4 --prompt "try four approaches"
 orchestra create "dashboard polish" <dir> --prompt-file prompt.md
+orchestra create "read-only survey" <dir> -n 6 --explore --prompt "produce a report"
 ```
 
 Creates one or more isolated workspaces from the repo under the required workspace name. Each agent gets a short id, its own worktree copy, and a branch named `orchestra/<id>`. A prompt is required so every created agent has an initial turn. The dashboard groups agents by workspace name first, with the source repo path shown as context.
+
+Pass `--explore` to start read-only report agents directly in `dir` instead. Explore agents can target non-git folders, share the same workdir, skip copies and branches, force Codex read-only sandboxing, and use their final assistant message as the report.
 
 ```bash
 orchestra status
@@ -220,13 +223,14 @@ orchestra diff <id>
 orchestra diff <id> --out patch.diff
 ```
 
-Shows the Git diff for an agent workspace, or writes it to a file with `--out`.
+Shows the Git diff for an agent workspace, or writes it to a file with `--out`. Explore agents are read-only and shared, so `diff` reports that no git diff is available.
 
 ```bash
 orchestra exec <id> "bun test"
 ```
 
 Runs a shell command inside the agent workspace and exits with the command exit code.
+This is disabled for explore agents because they share the original read-only source directory.
 
 ```bash
 orchestra interrupt <id>

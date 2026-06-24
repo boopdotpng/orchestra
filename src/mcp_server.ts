@@ -15,10 +15,11 @@ server.tool(
   [
     "Create one or more isolated Codex agent workspaces.",
     "Return shape is always a JSON object with an agents array, never a bare id: { agents: [ManagedAgent, ...] }.",
-    "Each ManagedAgent includes id, repoId, workspaceName, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
-    "The id is a 4-character lowercase hex string, and the branch is orchestra/<id>.",
+    "Each ManagedAgent includes id, repoId, workspaceName, optional explore, repoPath, baseCommit, sourcePath, optional parentAgentId, cwd, branch, threadId, optional activeTurnId, status, and createdAt.",
+    "The id is a 4-character lowercase hex string. Worktree agents use branch orchestra/<id>; explore agents use branch explore.",
     "When n is 1, agents has one element. When n > 1, agents has n elements, each with its own isolated workspace and id.",
     "Either provide prompt with optional n, or provide sharedPrompt with agents[{focus}] to start focused agents in one call.",
+    "Set explore=true to start read-only report agents directly in dir, including non-git folders, without creating copies or branches.",
     "create always starts the first turn so no dead idle agents are created.",
     "Concurrent setup is bounded by concurrency, or ORCHESTRA_CREATE_CONCURRENCY when omitted, defaulting to 8.",
     `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
@@ -26,7 +27,11 @@ server.tool(
   ].join(" "),
   {
     name: z.string().min(1).describe("Required workspace/run name used to group these agents in the UI and status output."),
-    dir: z.string().describe("Path inside the source git repository to copy into isolated agent workspaces."),
+    dir: z.string().describe("Source directory. By default it must be inside a git repository; with explore=true it may be any existing directory."),
+    explore: z
+      .boolean()
+      .optional()
+      .describe("Create read-only report agents directly in dir. Allows non-git folders and reuses the same cwd for every created agent."),
     n: z.number().int().positive().optional().describe("Number of agents to create when using prompt. Values greater than 1 fan out and return multiple ids in agents[]."),
     concurrency: z
       .number()
@@ -56,8 +61,8 @@ server.tool(
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
   },
-  async ({ name, dir, n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
-    text(await post("/agents", { name, dir, count: n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
+  async ({ name, dir, explore, n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
+    text(await post("/agents", { name, dir, explore, count: n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
 );
 
 server.tool(
@@ -153,7 +158,7 @@ server.tool(
 
 server.tool(
   "exec",
-  "Run a shell command in an agent workspace. This is independent of the agent's Codex turn; it runs immediately in the workspace cwd and does not steer or block the agent's active turn.",
+  "Run a shell command in a worktree agent workspace. This is independent of the agent's Codex turn; it runs immediately in the workspace cwd and does not steer or block the agent's active turn. Disabled for explore agents because they share a read-only source workdir.",
   {
     id: z.string().describe("4-character lowercase hex agent id returned by create."),
     cmd: z.string().describe("Shell command to run with bash -c in the agent workspace."),
@@ -221,6 +226,7 @@ type WorkspaceListing = {
   agentCount: number;
   agentIds: string[];
   statuses: Record<string, number>;
+  modes: Record<string, number>;
   repoPaths: string[];
   workdirs: string[];
 };
@@ -244,6 +250,7 @@ function listWorkspaces(status: unknown): { workspaces: WorkspaceListing[] } {
         agentCount: 0,
         agentIds: [],
         statuses: {},
+        modes: {},
         repoPaths: [],
         workdirs: [],
       } satisfies WorkspaceListing);
@@ -257,6 +264,8 @@ function listWorkspaces(status: unknown): { workspaces: WorkspaceListing[] } {
     if (status) {
       listing.statuses[status] = (listing.statuses[status] ?? 0) + 1;
     }
+    const mode = agent.explore === true ? "explore" : "worktree";
+    listing.modes[mode] = (listing.modes[mode] ?? 0) + 1;
     appendUnique(listing.repoPaths, readString(agent, "repoPath"));
     appendUnique(listing.workdirs, readString(agent, "cwd"));
     byName.set(name, listing);

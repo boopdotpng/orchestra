@@ -41,6 +41,7 @@ export type ManagedAgent = {
   id: string;
   repoId: number;
   workspaceName: string;
+  explore?: boolean | undefined;
   repoPath?: string | undefined;
   baseCommit?: string | undefined;
   sourcePath?: string | undefined;

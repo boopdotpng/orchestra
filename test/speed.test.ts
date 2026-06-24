@@ -83,6 +83,31 @@ describe("MCP call path speed checks", () => {
     expect(tornDown.agents).toHaveLength(4);
     expect(created.agents.every((agent) => !existsSync(agent.cwd))).toBe(true);
 
+    const exploreSource = join(root, "plain-folder");
+    mkdirSync(exploreSource, { recursive: true });
+    writeFileSync(join(exploreSource, "notes.txt"), "inspect me\n");
+    const explored = await timedJson("MCP explore create", 120, () =>
+      handler(
+        jsonRequest("http://127.0.0.1/agents", {
+          name: "mcp explore",
+          dir: exploreSource,
+          explore: true,
+          count: 3,
+          prompt: "report",
+        }),
+      ),
+    ) as { agents: ManagedAgent[] };
+    expect(explored.agents).toHaveLength(3);
+    expect(explored.agents.every((agent) => agent.explore && agent.cwd === exploreSource)).toBe(true);
+    await timedJson("MCP explore status", 80, () => handler(new Request("http://127.0.0.1/status?workspace=mcp%20explore")));
+    const exploreDiff = await timedText("MCP explore diff", 60, () => handler(jsonRequest("http://127.0.0.1/diff", { agent: explored.agents[0]!.id })));
+    expect(exploreDiff).toContain("explore agent");
+    const exploredTornDown = await timedJson("MCP explore teardown", 120, () =>
+      handler(jsonRequest("http://127.0.0.1/teardown", { workspace: "mcp explore" })),
+    ) as { agents: ManagedAgent[] };
+    expect(exploredTornDown.agents).toHaveLength(3);
+    expect(existsSync(exploreSource)).toBe(true);
+
     store.close();
   });
 

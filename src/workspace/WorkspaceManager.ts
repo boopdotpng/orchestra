@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -18,6 +18,7 @@ export type WorkspaceManagerOptions = {
 
 export type CreateAgentsOptions = WorkspaceManagerOptions & {
   workspaceName: string;
+  explore?: boolean | undefined;
   count?: number | undefined;
   concurrency?: number | undefined;
   prompt?: string | undefined;
@@ -83,9 +84,19 @@ type AgentDiffStats = {
 type CreateSource = {
   repo: RepoRegistration;
   sourcePath: string;
-  baseCommit: string;
+  baseCommit?: string | undefined;
+  explore: boolean;
   parentAgentId?: string | undefined;
 };
+
+const EXPLORE_BASE_COMMIT = "explore";
+const EXPLORE_BRANCH = "explore";
+const EXPLORE_DEVELOPER_INSTRUCTIONS = [
+  "You are running as an Orchestra explore agent.",
+  "Inspect the provided directory in read-only mode.",
+  "Do not modify, create, delete, rename, or reformat files.",
+  "Use your final assistant message as a concise report of findings, evidence, and recommended next steps.",
+].join("\n");
 
 export class WorkspaceManager {
   constructor(
@@ -118,13 +129,13 @@ export class WorkspaceManager {
     if (!workspaceName) {
       throw new Error("name is required");
     }
-    const source = this.resolveCreateSource(dir);
+    const source = this.resolveCreateSource(dir, Boolean(options.explore));
     const prompts = resolveAgentPrompts(options);
     const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
     const repoRunsRoot = join(runsRoot, basename(source.repo.path));
     const reservedIds = new Set(this.store.listManagedAgents().map((agent) => agent.id));
     const tasks = prompts.map((prompt) => {
-      const id = uniqueAgentId((candidate) => !reservedIds.has(candidate) && !existsSync(join(repoRunsRoot, candidate)));
+      const id = uniqueAgentId((candidate) => !reservedIds.has(candidate) && (source.explore || !existsSync(join(repoRunsRoot, candidate))));
       reservedIds.add(id);
       return { id, prompt };
     });
@@ -135,16 +146,17 @@ export class WorkspaceManager {
 
   async steer(id: string, input: string, options: WorkspaceManagerOptions = {}) {
     const agent = this.requiredAgent(id);
+    const turnOptions = agent.explore ? { ...options, approvalPolicy: "never" as const, sandbox: "read-only" as const } : options;
     const turn =
       agent.status === "running" && agent.activeTurnId
         ? await this.manager.steer(agent.threadId, agent.activeTurnId, input)
         : await this.manager.send(agent.threadId, input, {
             cwd: agent.cwd,
-            model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
-            serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
-            reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
-            approvalPolicy: options.approvalPolicy,
-            sandbox: options.sandbox,
+            model: turnOptions.model ?? this.defaults.model ?? DEFAULT_MODEL,
+            serviceTier: turnOptions.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
+            reasoningEffort: turnOptions.reasoningEffort ?? this.defaults.reasoningEffort,
+            approvalPolicy: turnOptions.approvalPolicy,
+            sandbox: turnOptions.sandbox,
             personality: "friendly",
           });
     return turn;
@@ -184,6 +196,9 @@ export class WorkspaceManager {
 
   diff(id: string): string {
     const agent = this.requiredAgent(id);
+    if (agent.explore) {
+      return `agent ${agent.id} is an explore agent; no git diff is available for its read-only shared workdir.\n`;
+    }
     return this.withDiffIndex(agent.cwd, (env) => {
       const baseCommit = agent.baseCommit ?? git(agent.cwd, ["merge-base", "HEAD", agent.branch]);
       return git(agent.cwd, ["diff", baseCommit], { allowFailure: true, env });
@@ -261,6 +276,9 @@ export class WorkspaceManager {
 
   exec(id: string, command: string): { exitCode: number; output: string } {
     const agent = this.requiredAgent(id);
+    if (agent.explore) {
+      throw new Error(`exec is disabled for explore agent ${agent.id} because it shares a read-only source workdir`);
+    }
     const proc = Bun.spawnSync(["bash", "-c", command], {
       cwd: agent.cwd,
       stdout: "pipe",
@@ -334,7 +352,7 @@ export class WorkspaceManager {
   }
 
   async teardown(dir: string): Promise<ManagedAgent[]> {
-    const repoPath = gitRoot(dir);
+    const repoPath = teardownRepoPath(dir);
     const repo = this.store.getRepoByPath(repoPath);
     if (!repo) {
       return [];
@@ -404,8 +422,10 @@ export class WorkspaceManager {
     if (agent.activeTurnId) {
       await this.manager.interrupt(agent.threadId, agent.activeTurnId).catch(() => undefined);
     }
-    rmSync(agent.cwd, { recursive: true, force: true });
-    pruneEmptyRunDirs(agent.cwd);
+    if (!agent.explore) {
+      rmSync(agent.cwd, { recursive: true, force: true });
+      pruneEmptyRunDirs(agent.cwd);
+    }
     this.store.deleteManagedAgent(agent.id);
     return agent;
   }
@@ -426,7 +446,19 @@ export class WorkspaceManager {
     return agents;
   }
 
-  private resolveCreateSource(dir: string): CreateSource {
+  private resolveCreateSource(dir: string, explore: boolean): CreateSource {
+    if (explore) {
+      const sourcePath = existingDirectory(dir);
+      return {
+        repo: this.store.upsertRepo({
+          path: sourcePath,
+          baseCommit: EXPLORE_BASE_COMMIT,
+          baseBranch: EXPLORE_BRANCH,
+        }),
+        sourcePath,
+        explore: true,
+      };
+    }
     const sourcePath = gitRoot(dir);
     const baseCommit = git(sourcePath, ["rev-parse", "HEAD"]);
     const baseBranch = git(sourcePath, ["branch", "--show-current"]) || "HEAD";
@@ -438,6 +470,7 @@ export class WorkspaceManager {
           repo,
           sourcePath,
           baseCommit,
+          explore: false,
           parentAgentId: parentAgent.id,
         };
       }
@@ -450,6 +483,7 @@ export class WorkspaceManager {
       }),
       sourcePath,
       baseCommit,
+      explore: false,
     };
   }
 
@@ -463,11 +497,16 @@ export class WorkspaceManager {
 
   private async createOne(source: CreateSource, options: CreateAgentsOptions, promptSpec: ResolvedAgentPrompt, id: string): Promise<ManagedAgent> {
     const runsRoot = expandHome(options.runsRoot ?? process.env.ORCHESTRA_RUNS ?? join(homedir(), ".orchestra", "runs"));
-    const cwd = join(runsRoot, basename(source.repo.path), id);
-    mkdirSync(dirname(cwd), { recursive: true });
-    await copyReflink(source.sourcePath, cwd);
-    await asyncGit(cwd, ["switch", "-c", `orchestra/${id}`, source.baseCommit]);
-    const orchestraBaseCommit = await createOrchestraBaseCommit(cwd);
+    const cwd = source.explore ? source.sourcePath : join(runsRoot, basename(source.repo.path), id);
+    if (!source.explore) {
+      mkdirSync(dirname(cwd), { recursive: true });
+      await copyReflink(source.sourcePath, cwd);
+      await asyncGit(cwd, ["switch", "-c", `orchestra/${id}`, requiredBaseCommit(source)]);
+    }
+    const orchestraBaseCommit = source.explore ? undefined : await createOrchestraBaseCommit(cwd);
+    const branch = source.explore ? EXPLORE_BRANCH : `orchestra/${id}`;
+    const approvalPolicy = source.explore ? "never" : (options.approvalPolicy ?? "never");
+    const sandbox = source.explore ? "read-only" : (options.sandbox ?? "danger-full-access");
 
     const thread = await this.manager.startAgent({
       cwd,
@@ -475,20 +514,22 @@ export class WorkspaceManager {
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
       reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
-      approvalPolicy: options.approvalPolicy ?? "never",
-      sandbox: options.sandbox ?? "danger-full-access",
+      approvalPolicy,
+      sandbox,
       personality: "friendly",
+      developerInstructions: source.explore ? EXPLORE_DEVELOPER_INSTRUCTIONS : undefined,
     });
     const managed: ManagedAgent = {
       id,
       repoId: source.repo.id,
       workspaceName: options.workspaceName,
+      explore: source.explore,
       repoPath: source.repo.path,
       baseCommit: orchestraBaseCommit,
       sourcePath: source.sourcePath,
       parentAgentId: source.parentAgentId,
       cwd,
-      branch: `orchestra/${id}`,
+      branch,
       threadId: thread.threadId,
       activeTurnId: undefined,
       status: "idle",
@@ -501,8 +542,8 @@ export class WorkspaceManager {
       model: options.model ?? this.defaults.model ?? DEFAULT_MODEL,
       serviceTier: options.serviceTier ?? this.defaults.serviceTier ?? DEFAULT_SERVICE_TIER,
       reasoningEffort: options.reasoningEffort ?? this.defaults.reasoningEffort,
-      approvalPolicy: options.approvalPolicy,
-      sandbox: options.sandbox,
+      approvalPolicy,
+      sandbox,
       personality: "friendly",
     });
     this.store.insertManagedAgent({ ...managed, activeTurnId: turn.turnId, status: "running" });
@@ -544,6 +585,9 @@ export class WorkspaceManager {
 
   private diffStats(id: string): AgentDiffStats {
     const agent = this.requiredAgent(id);
+    if (agent.explore) {
+      return { id: agent.id, additions: 0, deletions: 0, files: [], surfaces: [] };
+    }
     return this.withDiffIndex(agent.cwd, (env) => {
       const baseCommit = agent.baseCommit ?? git(agent.cwd, ["merge-base", "HEAD", agent.branch]);
       const output = git(agent.cwd, ["diff", "--numstat", baseCommit], { allowFailure: true, env });
@@ -609,6 +653,38 @@ export function expandHome(path: string): string {
 
 function gitRoot(dir: string): string {
   return git(expandHome(dir), ["rev-parse", "--show-toplevel"]);
+}
+
+function teardownRepoPath(dir: string): string {
+  const path = expandHome(dir);
+  const storedPath = tryGitRoot(path);
+  return storedPath ?? path;
+}
+
+function tryGitRoot(dir: string): string | undefined {
+  try {
+    return gitRoot(dir);
+  } catch {
+    return undefined;
+  }
+}
+
+function existingDirectory(dir: string): string {
+  const path = expandHome(dir);
+  if (!existsSync(path)) {
+    throw new Error(`directory does not exist: ${path}`);
+  }
+  if (!statSync(path).isDirectory()) {
+    throw new Error(`not a directory: ${path}`);
+  }
+  return path;
+}
+
+function requiredBaseCommit(source: CreateSource): string {
+  if (!source.baseCommit) {
+    throw new Error("git base commit is required");
+  }
+  return source.baseCommit;
 }
 
 function isBareRepoName(target: string): boolean {

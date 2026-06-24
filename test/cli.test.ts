@@ -44,6 +44,22 @@ describe("orchestra CLI daemon routing", () => {
     expect(create?.body).toMatchObject({ name: "auth cleanup", dir: root, prompt: "ship it", count: 2 });
   });
 
+  test("routes create explore flag through the orchestra server", async () => {
+    const requests: RecordedRequest[] = [];
+    const baseUrl = startStubServer(requests, {
+      "POST /agents": { agents: [{ id: "ab12", status: "running", explore: true, cwd: "/tmp/source", threadId: "thread-1" }] },
+    });
+    const root = mkdtempSync(join(tmpdir(), "orchestra-cli-explore-"));
+    roots.push(root);
+
+    const proc = await runCli(["create", "read only", root, "--prompt", "report", "--explore", "--url", baseUrl]);
+
+    expect(proc.stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    const create = requests.find((request) => request.path === "/agents");
+    expect(create?.body).toMatchObject({ name: "read only", dir: root, prompt: "report", explore: true });
+  });
+
   test("routes interrupt through a reachable orchestra server", async () => {
     const requests: RecordedRequest[] = [];
     const baseUrl = startStubServer(requests, {

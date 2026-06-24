@@ -154,6 +154,7 @@ async function route(request: Request, deps: OrchestraHttpDeps): Promise<Respons
     const name = requiredString(body.name, "name");
     const agents = await deps.workspace.create(requiredString(body.dir, "dir"), {
       workspaceName: name,
+      explore: body.explore === true,
       count: typeof body.count === "number" ? body.count : undefined,
       concurrency: typeof body.concurrency === "number" ? body.concurrency : undefined,
       prompt: typeof body.prompt === "string" ? body.prompt : undefined,

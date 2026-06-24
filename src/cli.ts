@@ -169,6 +169,7 @@ async function runViaDaemon(client: OrchestraClient, args: ParsedArgs): Promise<
         name,
         dir,
         prompt,
+        explore: args.flags.explore === true,
         count: flagNumber(args.flags.n) ?? 1,
         ...turnOverrides(args),
       });
@@ -241,6 +242,7 @@ async function create(workspace: WorkspaceManager, args: ParsedArgs, config: Orc
   const prompt = required(promptFlag(args), "prompt");
   const createOptions = {
     workspaceName: name,
+    explore: args.flags.explore === true,
     count: flagNumber(args.flags.n) ?? 1,
     model: modelFlag(args, config),
     serviceTier: serviceTierFlag(args, config),
@@ -440,6 +442,7 @@ function status(store: OrchestraStore, args: ParsedArgs): void {
   const rows = agents.map((agent) => ({
     id: agent.id,
     workspace: agent.workspaceName,
+    mode: agent.explore ? "explore" : "worktree",
     status: agent.status,
     turns: String(agent.turnCount),
     tokens: agent.tokensUsed === undefined ? "-" : compactNumber(agent.tokensUsed),
@@ -447,7 +450,7 @@ function status(store: OrchestraStore, args: ParsedArgs): void {
     repo: shortPath(agent.repoPath ?? agent.cwd),
     workdir: shortPath(agent.cwd),
   }));
-  printTable(rows, ["id", "workspace", "status", "turns", "tokens", "activity", "repo", "workdir"], {
+  printTable(rows, ["id", "workspace", "mode", "status", "turns", "tokens", "activity", "repo", "workdir"], {
     maxWidths: { workspace: 20, status: 16, repo: 26, workdir: 26 },
   });
   printLastOutput(agents);
@@ -471,12 +474,13 @@ function ls(store: OrchestraStore): void {
   const rows = agents.map((agent) => ({
     id: agent.id,
     workspace: agent.workspaceName,
+    mode: agent.explore ? "explore" : "worktree",
     status: agent.status,
     repo: shortPath(agent.repoPath ?? ""),
     branch: agent.branch,
     workdir: shortPath(agent.cwd),
   }));
-  printTable(rows, ["id", "workspace", "status", "repo", "branch", "workdir"], {
+  printTable(rows, ["id", "workspace", "mode", "status", "repo", "branch", "workdir"], {
     maxWidths: { workspace: 20, repo: 28, branch: 24, workdir: 28 },
   });
 }
@@ -1326,7 +1330,7 @@ function printHelp(): void {
   console.log(`orchestra
 
 Usage:
-  orchestra create <name> <dir> [-n N] [--prompt TEXT | --prompt-file FILE]
+  orchestra create <name> <dir> [-n N] [--explore] [--prompt TEXT | --prompt-file FILE]
   orchestra status [workspace-name|--workspace NAME]
   orchestra teardown <workspace-name|fuzzy-match> [--yes]
   orchestra remove <id>
@@ -1364,6 +1368,7 @@ Options:
   --db PATH                 default: ~/.orchestra/orchestra.db
   --url URL                 orchestra server, default: $ORCHESTRA_URL or http://127.0.0.1:5751
   --workspace NAME          filter status output by workspace name
+  --explore                 create read-only report agents that share DIR directly
   --yes                     confirm a unique fuzzy teardown match without prompting
   --local                   skip the orchestra server and use a direct codex app-server transport
 

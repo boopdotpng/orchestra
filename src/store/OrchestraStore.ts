@@ -116,6 +116,7 @@ export class OrchestraStore {
         id TEXT PRIMARY KEY,
         repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
         workspace_name TEXT,
+        explore INTEGER NOT NULL DEFAULT 0,
         source_path TEXT,
         parent_agent_id TEXT,
         base_commit TEXT,
@@ -138,6 +139,7 @@ export class OrchestraStore {
     `);
     this.addColumnIfMissing("managed_agents", "on_complete", "TEXT");
     this.addColumnIfMissing("managed_agents", "workspace_name", "TEXT");
+    this.addColumnIfMissing("managed_agents", "explore", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("managed_agents", "source_path", "TEXT");
     this.addColumnIfMissing("managed_agents", "parent_agent_id", "TEXT");
     this.addColumnIfMissing("managed_agents", "base_commit", "TEXT");
@@ -293,13 +295,14 @@ export class OrchestraStore {
     this.db
       .query(
         `INSERT INTO managed_agents (
-          id, repo_id, workspace_name, source_path, parent_agent_id, base_commit, cwd, branch,
+          id, repo_id, workspace_name, explore, source_path, parent_agent_id, base_commit, cwd, branch,
           thread_id, active_turn_id, status, on_complete, created_at
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           repo_id = excluded.repo_id,
           workspace_name = excluded.workspace_name,
+          explore = excluded.explore,
           source_path = excluded.source_path,
           parent_agent_id = excluded.parent_agent_id,
           base_commit = excluded.base_commit,
@@ -314,6 +317,7 @@ export class OrchestraStore {
         agent.id,
         agent.repoId,
         agent.workspaceName,
+        agent.explore ? 1 : 0,
         agent.sourcePath ?? null,
         agent.parentAgentId ?? null,
         agent.baseCommit ?? null,
@@ -687,6 +691,7 @@ function managedAgentFromRow(row: Row): ManagedAgent {
     id: String(row.id),
     repoId: Number(row.repo_id),
     workspaceName: optionalString(row.workspace_name) ?? legacyWorkspaceName(row),
+    explore: optionalBoolean(row.explore),
     repoPath: optionalString(row.repo_path),
     baseCommit: optionalString(row.base_commit),
     sourcePath: optionalString(row.source_path),
@@ -777,6 +782,22 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    return value === "1" || value.toLowerCase() === "true";
+  }
+  return undefined;
 }
 
 function nowSeconds(): number {

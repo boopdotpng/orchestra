@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
@@ -124,6 +124,41 @@ describe("Orchestra HTTP handler", () => {
     expect(backend.startedTurns.map((turn) => turn.input).sort()).toEqual(
       ["Second focused pass\n\nFocus:\nAdd tracepoints", "Second focused pass\n\nFocus:\nFix reg 4"].sort(),
     );
+
+    store.close();
+  });
+
+  test("creates explore agents from a non-git folder through HTTP", async () => {
+    const root = tempRoot();
+    const source = join(root, "notes");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "README.md"), "# notes\n");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    const handler = createOrchestraHandler({ store, manager, workspace, cwd: root });
+
+    const createResponse = await handler(
+      jsonRequest("http://127.0.0.1/agents", {
+        name: "explore notes",
+        dir: source,
+        explore: true,
+        count: 2,
+        prompt: "inspect only",
+      }),
+    );
+
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { agents: Array<{ id: string; cwd: string; branch: string; explore: boolean }> };
+    expect(created.agents).toHaveLength(2);
+    expect(created.agents.every((agent) => agent.explore)).toBe(true);
+    expect(created.agents.every((agent) => agent.cwd === source)).toBe(true);
+    expect(created.agents.every((agent) => agent.branch === "explore")).toBe(true);
+    expect(backend.startedThreads.every((thread) => thread.sandbox === "read-only")).toBe(true);
+
+    const diffResponse = await handler(new Request(`http://127.0.0.1/agents/${created.agents[0]!.id}/diff`));
+    expect(await diffResponse.text()).toContain("explore agent");
 
     store.close();
   });
@@ -453,6 +488,7 @@ describe("Orchestra HTTP handler", () => {
 class FakeBackend implements CodexBackend {
   notifications = new EventBus<BackendNotification>();
   requests = new EventBus<BackendServerRequest>();
+  startedThreads: Array<{ cwd?: string | undefined; approvalPolicy?: string | undefined; sandbox?: string | undefined }> = [];
   startedTurns: Array<{ threadId: string; input: string }> = [];
   steeredTurns: Array<{ threadId: string; turnId: string; input: string }> = [];
   private threadCount = 0;
@@ -469,8 +505,9 @@ class FakeBackend implements CodexBackend {
   async initialize() {
     return {};
   }
-  async startThread(options: { cwd?: string | undefined }) {
+  async startThread(options: { cwd?: string | undefined; approvalPolicy?: string | undefined; sandbox?: string | undefined }) {
     this.threadCount += 1;
+    this.startedThreads.push(options);
     return {
       thread: {
         id: `thread-${this.threadCount}`,

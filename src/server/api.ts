@@ -58,6 +58,7 @@ export type ConfigUpdateRequest = {
 export type CreateAgentsRequest = {
   name: string;
   dir: string;
+  explore?: boolean;
   count?: number;
   concurrency?: number;
   prompt?: string;
