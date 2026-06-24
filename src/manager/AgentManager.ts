@@ -54,7 +54,7 @@ export class AgentManager {
       // builds may not support the request.
       void this.backend
         .readRateLimits()
-        .then((result) => this.applyRateLimits(asRecord(result)?.rateLimits))
+        .then((result) => this.applyRateLimitsResponse(result))
         .catch(() => {});
     }
   }
@@ -66,7 +66,7 @@ export class AgentManager {
   async refreshRateLimits(): Promise<Json | undefined> {
     await this.connect();
     const result = await this.backend.readRateLimits();
-    this.applyRateLimits(asRecord(result)?.rateLimits);
+    this.applyRateLimitsResponse(result);
     return this.rateLimitsSnapshot;
   }
 
@@ -294,22 +294,25 @@ export class AgentManager {
     this.emit({ type: "approval.requested", approval });
   }
 
+  private applyRateLimitsResponse(result: Json | undefined): void {
+    const response = asRecord(result);
+    this.applyRateLimits(response?.rateLimits, asRecord(response?.rateLimitsByLimitId));
+  }
+
   // Rolling updates are sparse: merge non-null fields into the last snapshot
-  // (a null in an update does not clear a previously observed value). Emits
-  // an event only when the merged snapshot actually changed.
-  private applyRateLimits(update: Json | undefined): void {
+  // (a null in an update does not clear a previously observed value). Codex
+  // 0.140 also returns per-limit buckets, which we preserve alongside the
+  // default snapshot without changing the old top-level primary/secondary API.
+  private applyRateLimits(update: Json | undefined, byLimitIdUpdate?: Record<string, Json | undefined>): void {
     const next = asRecord(update);
     if (!next) {
       return;
     }
     const prev = this.rateLimitsSnapshot;
-    const merged: Record<string, Json | undefined> = { ...(prev ?? {}) };
-    for (const [key, value] of Object.entries(next)) {
-      if (value !== null && value !== undefined) {
-        merged[key] = value;
-      } else if (!(key in merged)) {
-        merged[key] = null;
-      }
+    const merged = mergeSparseRecord(prev, next);
+    const byLimitId = mergeRateLimitBuckets(prev, merged, byLimitIdUpdate);
+    if (byLimitId) {
+      merged.rateLimitsByLimitId = byLimitId;
     }
     if (prev && JSON.stringify(merged) === JSON.stringify(prev)) {
       return;
@@ -321,6 +324,49 @@ export class AgentManager {
   private emit(event: AgentEvent): void {
     this.events.emit(event);
   }
+}
+
+function mergeRateLimitBuckets(
+  prev: Record<string, Json | undefined> | undefined,
+  mergedDefault: Record<string, Json | undefined>,
+  byLimitIdUpdate: Record<string, Json | undefined> | undefined,
+): Record<string, Json | undefined> | undefined {
+  const prevByLimitId = asRecord(prev?.rateLimitsByLimitId);
+  const byLimitId: Record<string, Json | undefined> = { ...(prevByLimitId ?? {}) };
+  let changed = Boolean(prevByLimitId);
+
+  if (byLimitIdUpdate) {
+    for (const [limitId, value] of Object.entries(byLimitIdUpdate)) {
+      const bucket = asRecord(value);
+      byLimitId[limitId] = bucket ? mergeSparseRecord(asRecord(prevByLimitId?.[limitId]), bucket) : value;
+      changed = true;
+    }
+  }
+
+  const defaultLimitId = readString(mergedDefault, "limitId");
+  if (defaultLimitId) {
+    const defaultBucket = { ...mergedDefault };
+    delete defaultBucket.rateLimitsByLimitId;
+    byLimitId[defaultLimitId] = mergeSparseRecord(asRecord(byLimitId[defaultLimitId]), defaultBucket);
+    changed = true;
+  }
+
+  return changed ? byLimitId : undefined;
+}
+
+function mergeSparseRecord(
+  prev: Record<string, Json | undefined> | undefined,
+  next: Record<string, Json | undefined>,
+): Record<string, Json | undefined> {
+  const merged: Record<string, Json | undefined> = { ...(prev ?? {}) };
+  for (const [key, value] of Object.entries(next)) {
+    if (value !== null && value !== undefined) {
+      merged[key] = value;
+    } else if (!(key in merged)) {
+      merged[key] = null;
+    }
+  }
+  return merged;
 }
 
 function agentFromThreadResponse(result: Json, model?: string): Agent {

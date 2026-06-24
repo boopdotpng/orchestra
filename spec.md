@@ -4,7 +4,7 @@
 > babysitting background terminals.
 
 Status: **draft / design**
-Target Codex: **`codex-cli 0.138.0`** (app-server **protocol v2**)
+Target Codex: **`codex-cli 0.140.0`** (app-server **protocol v2**)
 Last updated: 2026-06-08
 
 ---
@@ -43,7 +43,7 @@ Contrast with the wrong layers:
 
 ### 2.2 v1 vs v2 — decision: **v2**
 
-Verified against the 0.138.0 source (`app-server-protocol/src/protocol/`):
+Verified against the 0.140.0 source (`app-server-protocol/src/protocol/`):
 
 - The live `ClientRequest` enum (`protocol/common.rs`) references **305 distinct
   `v2::` types vs 15 `v1::` types**.
@@ -55,18 +55,19 @@ Verified against the 0.138.0 source (`app-server-protocol/src/protocol/`):
 
 ### 2.3 Stability of v2 (justifies pinning + thin abstraction)
 
-Diffed `rust-v0.138.0` → `origin/main` (many releases ahead, up to PR #27106):
+Diffed the committed 0.138-era bindings against `codex-cli 0.140.0`:
 
-- **The wire method table did not change at all** — zero methods added, removed,
-  or renamed.
-- The only v2 field deltas are backward-compatible:
-  - one added **optional** `thread_id`,
-  - one serde rename that keeps **both** names as aliases
-    (`auto_review` ⇄ `guardian_subagent`),
-  - a doc-comment edit.
-- `rust-v0.139.0-alpha.1` shows the identical (tiny) churn.
+- Core lifecycle methods Orchestra uses (`thread/start`, `thread/resume`,
+  `turn/start`, `turn/steer`, `turn/interrupt`, `account/rateLimits/read`)
+  remain compatible.
+- 0.140 adds surrounding protocol surface such as `thread/delete`,
+  `thread/deleted`, remote-control params, capability roots, and sub-agent
+  activity items.
+- Existing rate-limit fields are compatible, and 0.140's richer
+  `rateLimitsByLimitId` map is backward-compatible with the original default
+  `rateLimits` snapshot.
 
-Conclusion: v2 is safe to build on. Pin to 0.138.0, wrap behind an interface
+Conclusion: v2 is safe to build on. Pin to 0.140.0, wrap behind an interface
 (§6) so a future version bump is a near-no-op.
 
 > Note: some v2 methods are gated `#[experimental(...)]` (e.g. `thread/search`,
@@ -255,8 +256,8 @@ agent can be re-pointed without restart.
 
 ## 8. Versioning / pinning strategy
 
-- Pin runtime to `codex-cli 0.138.0`; pin source to tag `rust-v0.138.0`.
-- Commit `bindings/codex-v2/` (generated from 0.138.0) to the repo as the
+- Pin runtime to `codex-cli 0.140.0`; pin source to tag `rust-v0.140.0`.
+- Commit `bindings/codex-v2/` (generated from 0.140.0) to the repo as the
   source of truth for wire types.
 - On Codex upgrade: generate into a new `bindings/codex-vNNN`, diff the
   `ClientRequest` / `ServerNotification` / `ServerRequest` unions, update
@@ -428,6 +429,6 @@ fan-out can't block one tool call.
 
 - `spec.md` — this document.
 - `bindings/codex-v2/` — TypeScript protocol bindings generated from
-  `codex-cli 0.138.0` (`generate-ts`). `ClientRequest.ts`,
+  `codex-cli 0.140.0` (`generate-ts`). `ClientRequest.ts`,
   `ServerNotification.ts`, `ServerRequest.ts`, `ClientNotification.ts` at top
   level; payload types under `v2/`. **Imported only by the transport layer.**

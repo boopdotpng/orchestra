@@ -130,4 +130,56 @@ describe("AgentManager", () => {
       planType: "plus",
     });
   });
+
+  test("preserves Codex 0.140 per-limit rate limit buckets", async () => {
+    const backend = new FakeBackend();
+    backend.readRateLimits = async () => ({
+      rateLimits: {
+        limitId: "codex",
+        primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1 },
+        secondary: { usedPercent: 5, windowDurationMins: 10080, resetsAt: 2 },
+        planType: "pro",
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1 },
+          secondary: { usedPercent: 5, windowDurationMins: 10080, resetsAt: 2 },
+          planType: "pro",
+        },
+        codex_spark: {
+          limitId: "codex_spark",
+          limitName: "GPT-5.3-Codex-Spark",
+          primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 3 },
+          secondary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 4 },
+          planType: "pro",
+        },
+      },
+    });
+    const manager = new AgentManager(backend);
+
+    await manager.refreshRateLimits();
+
+    expect(manager.rateLimits).toEqual({
+      limitId: "codex",
+      primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1 },
+      secondary: { usedPercent: 5, windowDurationMins: 10080, resetsAt: 2 },
+      planType: "pro",
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1 },
+          secondary: { usedPercent: 5, windowDurationMins: 10080, resetsAt: 2 },
+          planType: "pro",
+        },
+        codex_spark: {
+          limitId: "codex_spark",
+          limitName: "GPT-5.3-Codex-Spark",
+          primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 3 },
+          secondary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 4 },
+          planType: "pro",
+        },
+      },
+    });
+  });
 });

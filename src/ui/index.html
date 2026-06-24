@@ -149,7 +149,7 @@
   .side-foot { border-top: 1px solid var(--border-soft); padding: 10px 14px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
   .rate-chip { display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
   .rl-row { display: flex; align-items: center; gap: 7px; }
-  .rl-row .lbl { width: 38px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  .rl-row .lbl { width: 72px; color: var(--text-faint); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rl-row .bar { flex: 1; height: 4px; border-radius: 3px; background: var(--bg-elev); border: 1px solid var(--border-soft); overflow: hidden; }
   .rl-row .bar i { display: block; height: 100%; background: var(--green); }
   .rl-row.warn .bar i { background: var(--yellow); }
@@ -596,7 +596,7 @@ const state = {
   outBuf: {},          // id -> { itemId: text } live accumulation
   config: null,
   models: [],
-  rateLimits: null,    // latest codex account RateLimitSnapshot
+  rateLimits: null,    // latest codex RateLimitSnapshot plus optional rateLimitsByLimitId
   detailLoadSeq: 0,
   detailLoading: null,
   detailPending: {},
@@ -732,23 +732,46 @@ function rlResetText(w) {
   if (s < 86400) return Math.round(s / 3600) + "h";
   return Math.round(s / 86400) + "d";
 }
+function rlLimitLabel(rl) {
+  const raw = String((rl && (rl.limitName || rl.limitId)) || "codex");
+  return raw.replace(/^GPT-[^-]+-Codex-/i, "").replace(/^codex_/, "").slice(0, 12);
+}
+function rlBuckets(rl) {
+  if (!rl || typeof rl !== "object") return [];
+  const buckets = [];
+  const seen = new Set();
+  const byId = rl.rateLimitsByLimitId && typeof rl.rateLimitsByLimitId === "object" ? rl.rateLimitsByLimitId : null;
+  if (byId) {
+    for (const [id, bucket] of Object.entries(byId)) {
+      if (!bucket || typeof bucket !== "object" || (!bucket.primary && !bucket.secondary)) continue;
+      buckets.push({ id, label: rlLimitLabel({ limitId: id, ...bucket }), snapshot: bucket });
+      seen.add(id);
+    }
+  }
+  if ((rl.primary || rl.secondary) && !seen.has(rl.limitId || "codex")) {
+    buckets.unshift({ id: rl.limitId || "codex", label: rlLimitLabel(rl), snapshot: rl });
+  }
+  return buckets;
+}
 function renderRateLimits() {
   const el = $("rateChip");
   const rl = state.rateLimits;
-  const windows = [rl && rl.primary, rl && rl.secondary].filter(Boolean);
-  if (!windows.length) { el.hidden = true; return; }
+  const buckets = rlBuckets(rl);
+  if (!buckets.length) { el.hidden = true; return; }
   el.hidden = false;
-  el.innerHTML = windows.map((w) => {
-    const left = Math.max(0, Math.min(100, 100 - Math.round(w.usedPercent ?? 0)));
-    const cls = left <= 10 ? "crit" : left <= 30 ? "warn" : "";
-    const reset = rlResetText(w);
-    const tip = `codex ${rlWindowLabel(w)} limit · ${left}% left${reset ? ` · resets in ${reset}` : ""}${rl.planType ? ` · ${rl.planType}` : ""}`;
-    return `<div class="rl-row ${cls}" title="${esc(tip)}">
-      <span class="lbl">${esc(rlWindowLabel(w))}</span>
-      <span class="bar"><i style="width:${left}%"></i></span>
-      <span class="pct">${left}%</span>
-    </div>`;
-  }).join("");
+  el.innerHTML = buckets.flatMap((bucket) => [bucket.snapshot.primary, bucket.snapshot.secondary].filter(Boolean).map((w) => {
+      const left = Math.max(0, Math.min(100, 100 - Math.round(w.usedPercent ?? 0)));
+      const cls = left <= 10 ? "crit" : left <= 30 ? "warn" : "";
+      const reset = rlResetText(w);
+      const window = rlWindowLabel(w);
+      const label = buckets.length > 1 ? `${bucket.label} ${window}` : window;
+      const tip = `${bucket.label} ${window} limit · ${left}% left${reset ? ` · resets in ${reset}` : ""}${bucket.snapshot.planType ? ` · ${bucket.snapshot.planType}` : ""}`;
+      return `<div class="rl-row ${cls}" title="${esc(tip)}">
+        <span class="lbl">${esc(label)}</span>
+        <span class="bar"><i style="width:${left}%"></i></span>
+        <span class="pct">${left}%</span>
+      </div>`;
+    })).join("");
 }
 
 function renderSidebar() {
