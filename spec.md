@@ -4,8 +4,8 @@
 > babysitting background terminals.
 
 Status: **draft / design**
-Target Codex: **`codex-cli 0.140.0`** (app-server **protocol v2**)
-Last updated: 2026-06-08
+Target Codex: **`codex-cli 0.144.1`** (app-server **protocol v2**)
+Last updated: 2026-07-12
 
 ---
 
@@ -67,7 +67,7 @@ Diffed the committed 0.138-era bindings against `codex-cli 0.140.0`:
   `rateLimitsByLimitId` map is backward-compatible with the original default
   `rateLimits` snapshot.
 
-Conclusion: v2 is safe to build on. Pin to 0.140.0, wrap behind an interface
+Conclusion: v2 is safe to build on. Pin the runtime, wrap it behind an interface
 (§6) so a future version bump is a near-no-op.
 
 > Note: some v2 methods are gated `#[experimental(...)]` (e.g. `thread/search`,
@@ -201,7 +201,7 @@ so we can bump Codex versions or even swap backends with localized changes.
 ```
 
 Rules:
-- `bindings/codex-v2/` (generated TS) is imported **only** by `CodexV2Transport`.
+- `bindings/codex-v2/` (generated TS) is imported **only** by the Codex v2 backend.
 - `AgentManager` exposes Orchestra's own `Agent` / `AgentEvent` / `Approval`
   types. A future `CodexV3Transport` (or a non-Codex backend) implements the
   same `CodexBackend` interface; nothing else changes.
@@ -256,12 +256,12 @@ agent can be re-pointed without restart.
 
 ## 8. Versioning / pinning strategy
 
-- Pin runtime to `codex-cli 0.140.0`; pin source to tag `rust-v0.140.0`.
-- Commit `bindings/codex-v2/` (generated from 0.140.0) to the repo as the
+- Pin runtime and generated bindings to `codex-cli 0.144.1`.
+- Commit `bindings/codex-v2/` (generated from 0.144.1) to the repo as the
   source of truth for wire types.
 - On Codex upgrade: generate into a new `bindings/codex-vNNN`, diff the
   `ClientRequest` / `ServerNotification` / `ServerRequest` unions, update
-  `CodexV2Transport` only if the table changed (it hasn't through current main).
+  Codex v2 backend only if the table changed.
 - Feature-detect `#[experimental]` methods at runtime; never hard-depend on them.
 
 ---
@@ -435,6 +435,6 @@ fan-out can't block one tool call.
 
 - `spec.md` — this document.
 - `bindings/codex-v2/` — TypeScript protocol bindings generated from
-  `codex-cli 0.140.0` (`generate-ts`). `ClientRequest.ts`,
+  `codex-cli 0.144.1` (`generate-ts --experimental`). `ClientRequest.ts`,
   `ServerNotification.ts`, `ServerRequest.ts`, `ClientNotification.ts` at top
   level; payload types under `v2/`. **Imported only by the transport layer.**

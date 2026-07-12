@@ -12,7 +12,7 @@ export type ApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never"
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type Personality = "none" | "friendly" | "pragmatic";
 export type ServiceTier = "default" | "priority";
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export type StartAgentOptions = {
   cwd?: string | undefined;

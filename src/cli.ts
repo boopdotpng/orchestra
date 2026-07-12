@@ -1367,7 +1367,7 @@ Debug:
 Options:
   --model MODEL             default: ${DEFAULT_MODEL}
   --service-tier TIER       default | priority
-  --reasoning-effort LEVEL  low | medium | high | xhigh
+  --reasoning-effort LEVEL  low | medium | high | xhigh | max | ultra
   --approval POLICY         untrusted | on-failure | on-request | never
   --sandbox MODE            read-only | workspace-write | danger-full-access
   --config PATH             default: ./orchestra.toml, then ~/.orchestra/config.toml

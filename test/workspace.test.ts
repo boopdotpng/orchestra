@@ -89,6 +89,32 @@ describe("WorkspaceManager", () => {
     store.close();
   });
 
+  test("applies one model and ultra reasoning default to every agent in a workspace", async () => {
+    const root = tempRoot();
+    const source = join(root, "source");
+    const store = new OrchestraStore(join(root, "orchestra.db"));
+    const backend = new FakeBackend();
+    const manager = new AgentManager(backend, { store });
+    const workspace = new WorkspaceManager(store, manager);
+    initGitRepo(source);
+
+    await workspace.create(source, {
+      workspaceName: "sol ultra",
+      runsRoot: join(root, "runs"),
+      count: 3,
+      prompt: "have fun",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
+
+    expect(backend.startedThreads).toHaveLength(3);
+    expect(backend.startedThreads.every(({ model }) => model === "gpt-5.6-sol")).toBe(true);
+    expect(backend.startedThreads.every(({ reasoningEffort }) => reasoningEffort === "ultra")).toBe(true);
+    expect(backend.startedTurns.every(({ reasoningEffort }) => reasoningEffort === "ultra")).toBe(true);
+
+    store.close();
+  });
+
   test("creates multiple agents with bounded concurrency", async () => {
     const root = tempRoot();
     const source = join(root, "source");

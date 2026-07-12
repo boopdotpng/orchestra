@@ -22,7 +22,7 @@ server.tool(
     "Set explore=true to start read-only report agents directly in dir, including non-git folders, without creating copies or branches.",
     "create always starts the first turn so no dead idle agents are created.",
     "Concurrent setup is bounded by concurrency, or ORCHESTRA_CREATE_CONCURRENCY when omitted, defaulting to 8.",
-    `Defaults: model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER} from service config unless overridden.`,
+    `Defaults: model ${DEFAULT_MODEL}, serviceTier ${DEFAULT_SERVICE_TIER}, and reasoning effort from service config unless overridden.`,
     "Managed agent records persist in Orchestra's SQLite store across MCP/client sessions and service restarts until removed with teardown.",
   ].join(" "),
   {
@@ -60,9 +60,13 @@ server.tool(
       .enum(["default", "priority"])
       .optional()
       .describe(`Service tier override. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
+    reasoningEffort: z
+      .enum(["low", "medium", "high", "xhigh", "max", "ultra"])
+      .optional()
+      .describe("Reasoning effort override. Omit to use the service config or the selected model's Codex default."),
   },
-  async ({ name, dir, explore, n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier }) =>
-    text(await post("/agents", { name, dir, explore, count: n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier })),
+  async ({ name, dir, explore, n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier, reasoningEffort }) =>
+    text(await post("/agents", { name, dir, explore, count: n, concurrency, prompt, sharedPrompt, promptTemplate, agents, onComplete, model, serviceTier, reasoningEffort })),
 );
 
 server.tool(
@@ -172,7 +176,7 @@ server.tool(
     "Send guidance to an agent.",
     "If the agent is idle, starts a new turn. If the agent is running, sends turn/steer into the tracked active turn.",
     "Steering a running turn is interleaved with that turn rather than queued as a later turn. Shell exec calls are separate workspace commands and can run while a turn is active.",
-    `New idle turns use service config defaults unless model/serviceTier are provided; defaults are model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER}.`,
+    `New idle turns use service config defaults unless model/serviceTier/reasoningEffort are provided; defaults are model ${DEFAULT_MODEL}, serviceTier ${DEFAULT_SERVICE_TIER}, and the configured reasoning effort.`,
   ].join(" "),
   {
     id: z.string().describe("4-character lowercase hex agent id returned by create."),
@@ -182,8 +186,12 @@ server.tool(
       .enum(["default", "priority"])
       .optional()
       .describe(`Service tier override for a new idle turn. Ignored when steering an already-running turn. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
+    reasoningEffort: z
+      .enum(["low", "medium", "high", "xhigh", "max", "ultra"])
+      .optional()
+      .describe("Reasoning effort override for a new idle turn. Ignored when steering an already-running turn."),
   },
-  async ({ id, input, model, serviceTier }) => text(await post(`/agents/${encodeURIComponent(id)}/steer`, { input, model, serviceTier })),
+  async ({ id, input, model, serviceTier, reasoningEffort }) => text(await post(`/agents/${encodeURIComponent(id)}/steer`, { input, model, serviceTier, reasoningEffort })),
 );
 
 server.tool(
@@ -193,7 +201,7 @@ server.tool(
     "Provide `workspace`, `agents`, or both; at least one target selector is required.",
     "When both are provided, targets are the de-duplicated union of all agents in the workspace and the explicit agent ids.",
     "If an agent is idle, starts a new turn. If an agent is running, sends turn/steer into the tracked active turn.",
-    `New idle turns use service config defaults unless model/serviceTier are provided; defaults are model ${DEFAULT_MODEL} and serviceTier ${DEFAULT_SERVICE_TIER}.`,
+    `New idle turns use service config defaults unless model/serviceTier/reasoningEffort are provided; defaults are model ${DEFAULT_MODEL}, serviceTier ${DEFAULT_SERVICE_TIER}, and the configured reasoning effort.`,
     "Returns per-agent success/error results.",
   ].join(" "),
   {
@@ -205,8 +213,12 @@ server.tool(
       .enum(["default", "priority"])
       .optional()
       .describe(`Service tier override for new idle turns. Ignored when steering already-running turns. Omit to use service config, defaulting to ${DEFAULT_SERVICE_TIER}.`),
+    reasoningEffort: z
+      .enum(["low", "medium", "high", "xhigh", "max", "ultra"])
+      .optional()
+      .describe("Reasoning effort override for new idle turns. Ignored when steering already-running turns."),
   },
-  async ({ workspace, agents, input, model, serviceTier }) => text(await post("/broadcast", { workspace, agents, input, model, serviceTier })),
+  async ({ workspace, agents, input, model, serviceTier, reasoningEffort }) => text(await post("/broadcast", { workspace, agents, input, model, serviceTier, reasoningEffort })),
 );
 
 server.tool("interrupt", "Interrupt an agent's active turn.", { id: z.string().describe("4-character lowercase hex agent id returned by create.") }, async ({ id }) =>

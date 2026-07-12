@@ -2,11 +2,11 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export const DEFAULT_MODEL = "gpt-5.5";
+export const DEFAULT_MODEL = "gpt-5.6-sol";
 export const DEFAULT_SERVICE_TIER = "default";
 
 export type ServiceTier = "default" | "priority";
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export type OrchestraConfig = {
   model: string;
@@ -89,7 +89,7 @@ export function normalizeReasoningEffort(value: unknown): ReasoningEffort | unde
     return undefined;
   }
   const normalized = value.trim().toLowerCase();
-  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh") {
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh" || normalized === "max" || normalized === "ultra") {
     return normalized;
   }
   throw new Error(`invalid reasoning effort: ${value}`);

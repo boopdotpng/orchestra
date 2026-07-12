@@ -493,7 +493,7 @@ describe("Orchestra HTTP handler", () => {
         {
           model: "gpt-6",
           fastMode: true,
-          reasoningEffort: "high",
+          reasoningEffort: "max",
         },
         "PATCH",
       ),
@@ -502,15 +502,15 @@ describe("Orchestra HTTP handler", () => {
     const config = (await updateResponse.json()) as { model: string; serviceTier: string; fastMode: boolean; reasoningEffort?: string; sources: string[] };
     expect(config.model).toBe("gpt-6");
     expect(config.serviceTier).toBe("priority");
-    expect(config.reasoningEffort).toBe("high");
+    expect(config.reasoningEffort).toBe("max");
     expect(readFileSync(join(home, ".orchestra", "config.toml"), "utf8")).toContain('model = "gpt-6"');
-    expect(readFileSync(join(home, ".orchestra", "config.toml"), "utf8")).toContain('reasoning_effort = "high"');
+    expect(readFileSync(join(home, ".orchestra", "config.toml"), "utf8")).toContain('reasoning_effort = "max"');
 
     const configResponse = await handler(new Request("http://127.0.0.1/config"));
     const effective = (await configResponse.json()) as { model: string; serviceTier: string; reasoningEffort?: string };
     expect(effective.model).toBe("gpt-6");
     expect(effective.serviceTier).toBe("priority");
-    expect(effective.reasoningEffort).toBe("high");
+    expect(effective.reasoningEffort).toBe("max");
 
     const modelsResponse = await handler(new Request("http://127.0.0.1/models"));
     const models = (await modelsResponse.json()) as { data: Array<{ id: string; serviceTiers: string[] }> };

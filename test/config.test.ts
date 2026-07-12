@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadOrchestraConfig, normalizeServiceTier, writeOrchestraConfig } from "../src/config";
+import { loadOrchestraConfig, normalizeReasoningEffort, normalizeServiceTier, writeOrchestraConfig } from "../src/config";
 
 const roots: string[] = [];
 const originalHome = process.env.HOME;
@@ -35,7 +35,7 @@ describe("orchestra config", () => {
     const path = join(root, "empty.toml");
     writeFileSync(path, "");
     expect(loadOrchestraConfig({ path })).toEqual({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       serviceTier: "default",
       fastMode: false,
       reasoningEffort: undefined,
@@ -78,6 +78,11 @@ describe("orchestra config", () => {
     expect(normalizeServiceTier("normal")).toBe("default");
     expect(normalizeServiceTier("priority")).toBe("priority");
     expect(normalizeServiceTier("fast")).toBe("priority");
+  });
+
+  test("accepts GPT-5.6 maximum and ultra reasoning efforts", () => {
+    expect(normalizeReasoningEffort("max")).toBe("max");
+    expect(normalizeReasoningEffort("ULTRA")).toBe("ultra");
   });
 });
 

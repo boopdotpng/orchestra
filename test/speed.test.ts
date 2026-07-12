@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexBackend } from "../src/backend/CodexBackend";
 import { EventBus } from "../src/domain/events";
-import type { BackendNotification, BackendServerRequest, Json, ManagedAgent } from "../src/domain/types";
+import type { BackendNotification, BackendServerRequest, Json, ManagedAgent, StartAgentOptions } from "../src/domain/types";
 import { AgentManager } from "../src/manager/AgentManager";
 import { createOrchestraHandler } from "../src/server/http";
 import { OrchestraStore } from "../src/store/OrchestraStore";
@@ -52,10 +52,14 @@ describe("MCP call path speed checks", () => {
           dir: source,
           count: 4,
           prompt: "speed",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "ultra",
         }),
       ),
     ) as { agents: ManagedAgent[] };
     expect(created.agents).toHaveLength(4);
+    expect(backend.startedThreads.every(({ model }) => model === "gpt-5.6-sol")).toBe(true);
+    expect(backend.startedThreads.every(({ reasoningEffort }) => reasoningEffort === "ultra")).toBe(true);
     for (const agent of created.agents) {
       writeFileSync(join(agent.cwd, `${agent.id}.txt`), `change ${agent.id}\n`);
     }
@@ -70,10 +74,10 @@ describe("MCP call path speed checks", () => {
 
     backend.steerDelayMs = 10;
     await timedJson("MCP steer", 80, () =>
-      handler(jsonRequest(`http://127.0.0.1/agents/${created.agents[0]!.id}/steer`, { input: "one" })),
+      handler(jsonRequest(`http://127.0.0.1/agents/${created.agents[0]!.id}/steer`, { input: "one", reasoningEffort: "max" })),
     );
     await timedJson("MCP broadcast", 140, () =>
-      handler(jsonRequest("http://127.0.0.1/broadcast", { workspace: "mcp speed", input: "all" })),
+      handler(jsonRequest("http://127.0.0.1/broadcast", { workspace: "mcp speed", input: "all", reasoningEffort: "ultra" })),
     );
     expect(backend.maxConcurrentSteers).toBeGreaterThanOrEqual(4);
     await timedJson("MCP interrupt", 80, () => handler(jsonRequest(`http://127.0.0.1/agents/${created.agents[1]!.id}/interrupt`, {})));
@@ -275,6 +279,7 @@ class SpeedBackend implements CodexBackend {
   maxConcurrentSteers = 0;
   private threadCount = 0;
   private turnCount = 0;
+  readonly startedThreads: StartAgentOptions[] = [];
 
   async connect() {}
   async initialize() {
@@ -287,7 +292,8 @@ class SpeedBackend implements CodexBackend {
   onServerRequest(listener: (request: BackendServerRequest) => void) {
     return this.requests.on(listener);
   }
-  async startThread() {
+  async startThread(options: StartAgentOptions) {
+    this.startedThreads.push(options);
     this.threadCount += 1;
     return { thread: { id: `thread-new-${this.threadCount}`, status: { type: "idle" } } };
   }
